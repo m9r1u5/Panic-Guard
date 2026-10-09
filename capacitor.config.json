@@ -1,0 +1,8 @@
+{
+  "appId": "com.m9r1u5.panicguard",
+  "appName": "Panic Guard",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}
