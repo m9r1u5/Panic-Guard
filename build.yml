@@ -45,16 +45,21 @@ jobs:
         env:
           KS_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
-          mkdir -p ~/.android
+          test -s debug.keystore || { echo "debug.keystore is missing or empty in the repo"; exit 1; }
           if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
+            echo "$KS_B64" | base64 -d > android/app/debug.keystore
           else
-            cp debug.keystore ~/.android/debug.keystore
+            cp debug.keystore android/app/debug.keystore
           fi
+          ls -l android/app/debug.keystore
 
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+
+      - name: Show signing fingerprint
+        run: |
+          keytool -printcert -jarfile android/app/build/outputs/apk/debug/app-debug.apk | grep -E "Owner|SHA256" | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Publish release
         env:

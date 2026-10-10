@@ -39,7 +39,15 @@ def app(s):
                   "apply plugin: 'com.android.application'\napply plugin: 'kotlin-android'", 1)
     s = re.sub(r"versionCode\s+\d+", "versionCode " + vc, s, count=1)
     s = re.sub(r'versionName\s+"[^"]*"', 'versionName "1.0.' + vc + '"', s, count=1)
-    s = s.replace("android {", "android {\n    kotlinOptions { jvmTarget = '17' }", 1)
+    signing = (
+        "\n    signingConfigs {\n        debug {\n"
+        "            storeFile file('debug.keystore')\n"
+        "            storePassword 'android'\n"
+        "            keyAlias 'androiddebugkey'\n"
+        "            keyPassword 'android'\n"
+        "        }\n    }"
+    )
+    s = s.replace("android {", "android {\n    kotlinOptions { jvmTarget = '17' }" + signing, 1)
     return s
 edit("android/app/build.gradle", app)
 
