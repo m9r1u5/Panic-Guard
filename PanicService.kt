@@ -53,6 +53,7 @@ class PanicService : LifecycleService() {
     companion object {
         const val ACTION_START = "com.m9r1u5.panicguard.START"
         const val ACTION_STOP = "com.m9r1u5.panicguard.STOP"
+        const val ACTION_TEST = "com.m9r1u5.panicguard.TEST"
         const val ACTION_SENT = "com.m9r1u5.panicguard.SMS_SENT"
         const val CHANNEL = "pg_sync"
         const val NID = 4711
@@ -104,6 +105,8 @@ class PanicService : LifecycleService() {
     private var recSegs = 0
     private var recNote = ""
     private var camRetries = 0
+    private var testMode = false
+    private var recDone = false
     private var stopCb: (() -> Unit)? = null
 
     override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
@@ -117,16 +120,21 @@ class PanicService : LifecycleService() {
             stopPanic(intent?.getBooleanExtra("safe", false) ?: false)
             return START_NOT_STICKY
         }
-        if (!startForegroundSafe(action == ACTION_START)) {
+        if (!startForegroundSafe(action == ACTION_START || action == ACTION_TEST)) {
             log(this, "Could not start background service (Android refused). Check Location permission.")
             Store.set(this, "pActive", "false")
             stopSelf()
             return START_NOT_STICKY
         }
-        if (action == ACTION_START) {
+        if (action == ACTION_START || action == ACTION_TEST) {
+            if (running) {
+                log(this, "Already active - new trigger ignored")
+                return START_STICKY
+            }
+            testMode = action == ACTION_TEST
             Store.set(this, "pTarget", intent?.getStringExtra("target") ?: "both")
-            Store.set(this, "pActive", "true")
-            if (!running) beginPanic(true) else log(this, "Panic already active - second trigger ignored")
+            Store.set(this, "pActive", if (testMode) "false" else "true")
+            beginPanic(true)
         } else if (Store.get(this, "pActive") == "true") {
             if (!running) beginPanic(false)
         } else {
@@ -188,7 +196,7 @@ class PanicService : LifecycleService() {
         startedAt = if (isNew) now else (Store.get(this, "pStart").toLongOrNull() ?: now)
         Store.set(this, "pStart", startedAt.toString())
         targets = targetsFrom(Store.get(this, "pTarget", "both"))
-        log(this, if (isNew) "PANIC started, alerting " + Store.get(this, "pTarget", "both") else "Panic resumed after restart")
+        log(this, if (isNew) (if (testMode) "TEST started, to " else "PANIC started, alerting ") + Store.get(this, "pTarget", "both") else "Panic resumed after restart")
 
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -203,7 +211,7 @@ class PanicService : LifecycleService() {
         startLocation()
         if (isNew) {
             if (recAllowed) startRecording()
-            else { recNote = "Recording off: camera permission or Android refused"; log(this, recNote) }
+            else { recNote = "Recording off: camera permission or Android refused"; log(this, recNote); recDone = true }
         }
 
         if (isNew) {
@@ -213,8 +221,29 @@ class PanicService : LifecycleService() {
             initialSent = true
             needFollowUp = true
         }
-        scheduleTick()
+        if (testMode) handler.postDelayed({ finishTest() }, 30000) else scheduleTick()
         saveState()
+    }
+
+    private fun checkTestDone() {
+        if (!testMode || !running || !recDone || !initialSent) return
+        if (msgs.any { it.status == "sending" || it.status == "queued" }) return
+        finishTest()
+    }
+
+    private fun finishTest() {
+        if (!testMode || !running) return
+        val res = JSONObject()
+            .put("t", System.currentTimeMillis())
+            .put("clip", recSegs > 0)
+            .put("note", recNote)
+            .put("loc", if (lastLoc == null) "none" else if (fresh) "live" else "last known")
+        val arr = JSONArray()
+        for (m in msgs) arr.put(JSONObject().put("name", m.toName).put("status", m.status))
+        res.put("msgs", arr)
+        Store.set(this, "pTest", res.toString())
+        log(this, "TEST finished: " + msgs.joinToString { it.toName + " " + it.status } + ", clip " + (recSegs > 0))
+        stopPanic(false)
     }
 
     private fun stopPanic(safe: Boolean) {
@@ -229,7 +258,7 @@ class PanicService : LifecycleService() {
             }
             log(this, "I'm safe SMS handed to the phone")
         }
-        log(this, "Panic stopped (unlocked)")
+        log(this, if (testMode) "Test finished" else "Panic stopped (unlocked)")
         try { lm?.removeUpdates(locListener) } catch (e: Exception) { }
         Store.set(this, "pActive", "false")
         running = false
@@ -312,7 +341,8 @@ class PanicService : LifecycleService() {
     // ------------------------------------------------------------ messages
 
     private fun buildText(kind: String): String {
-        val base = Store.get(this, "message").ifBlank { DEFAULT_MSG }
+        val base = if (testMode) "TEST ONLY - NOT AN EMERGENCY. This is a test of my Panic Guard app. No action needed."
+                   else Store.get(this, "message").ifBlank { DEFAULT_MSG }
         val prefix = if (kind == "update") "[Panic Guard update] " else ""
         val l = lastLoc ?: return prefix + base + "\nLocation not available yet. I will send it when GPS finds me."
         val ageMin = (System.currentTimeMillis() - l.time) / 60000
@@ -382,11 +412,13 @@ class PanicService : LifecycleService() {
                     scheduleRetry(m)
                 }
                 saveState()
+                checkTestDone()
             }
         }
     }
 
     private fun scheduleRetry(m: Msg) {
+        if (testMode) return
         if (m.attempts >= 40) { m.status = "gave up"; log(this, "Gave up sending to ${m.toName}"); return }
         val delays = longArrayOf(15, 30, 60, 120, 300)
         val d = delays[minOf(m.attempts - 1, delays.size - 1)] * 1000
@@ -424,7 +456,9 @@ class PanicService : LifecycleService() {
                 recActive = false
                 recNote = "Camera failed: ${e.message}"
                 log(this, recNote)
+                if (testMode) recDone = true
                 saveState()
+                checkTestDone()
             }
         }, ContextCompat.getMainExecutor(this))
     }
@@ -445,22 +479,24 @@ class PanicService : LifecycleService() {
             recActive = false
             recNote = "Recording stopped: storage almost full"
             log(this, recNote)
+            if (testMode) { recDone = true; checkTestDone() }
             buzz()
             saveState()
             return
         }
         val vc = videoCapture ?: return
-        val file = File(recDir(), "panic_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
+        val file = File(recDir(), (if (testMode) "test_" else "panic_") + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
         try {
             var pr = vc.output.prepareRecording(this, FileOutputOptions.Builder(file).build())
             if (has(Manifest.permission.RECORD_AUDIO)) pr = pr.withAudioEnabled()
             recording = pr.start(ContextCompat.getMainExecutor(this)) { ev -> onVideoEvent(ev, file) }
-            handler.postDelayed(segRunnable, 60_000)
+            handler.postDelayed(segRunnable, if (testMode) 5_000L else 60_000L)
             if (!recNote.startsWith("Recording stopped")) recNote = ""
         } catch (e: Exception) {
             log(this, "Could not start segment: ${e.message}")
             camRetries++
-            if (camRetries > 10) { recActive = false; recNote = "Recording stopped: camera error"; buzz() }
+            if (testMode) { recActive = false; recNote = "Camera failed in test"; recDone = true; checkTestDone() }
+            else if (camRetries > 10) { recActive = false; recNote = "Recording stopped: camera error"; buzz() }
             else handler.postDelayed({ startSegment() }, 3000)
         }
         saveState()
@@ -480,6 +516,7 @@ class PanicService : LifecycleService() {
         }
         val cb = stopCb
         if (cb != null) { stopCb = null; cb(); return }
+        if (testMode) { recDone = true; recActive = false; saveState(); checkTestDone(); return }
         if (recActive && running) {
             if (err) {
                 camRetries++
@@ -508,6 +545,7 @@ class PanicService : LifecycleService() {
             .put("active", active)
             .put("startedAt", startedAt)
             .put("target", Store.get(this, "pTarget", "both"))
+            .put("test", testMode)
         val l = lastLoc
         if (l != null) {
             o.put("loc", JSONObject()

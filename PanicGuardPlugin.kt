@@ -400,4 +400,99 @@ class PanicGuardPlugin : Plugin() {
         } catch (e: Exception) { }
         call.resolve()
     }
+
+    // ================= Stage 5: test mode + recordings =================
+
+    @PluginMethod
+    fun startTest(call: PluginCall) {
+        if (stateOf("sms") != "granted") return call.reject("SMS permission is off")
+        val t = call.getString("target") ?: "both"
+        try {
+            val i = Intent(context, PanicService::class.java)
+                .setAction(PanicService.ACTION_TEST).putExtra("target", t)
+            ContextCompat.startForegroundService(context, i)
+            call.resolve()
+        } catch (e: Exception) {
+            call.reject(e.message ?: "Could not start test")
+        }
+    }
+
+    @PluginMethod
+    fun getTestResult(call: PluginCall) {
+        val r = JSObject(); r.put("json", Store.get(context, "pTest", "{}")); call.resolve(r)
+    }
+
+    private fun recFile(name: String): java.io.File? {
+        val dir = java.io.File(context.filesDir, "recordings")
+        if (name.contains('/') || name.contains('\\')) return null
+        val f = java.io.File(dir, name)
+        return if (f.exists() && f.canonicalPath.startsWith(dir.canonicalPath + "/")) f else null
+    }
+
+    private fun clipUri(f: java.io.File) =
+        FileProvider.getUriForFile(context, context.packageName + ".fileprovider", f)
+
+    @PluginMethod
+    fun playRecording(call: PluginCall) {
+        val f = recFile(call.getString("name") ?: "") ?: return call.reject("Clip not found")
+        val i = Intent(Intent.ACTION_VIEW).setDataAndType(clipUri(f), "video/mp4")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { context.startActivity(i); call.resolve() } catch (e: Exception) { call.reject("No video player found") }
+    }
+
+    @PluginMethod
+    fun shareRecording(call: PluginCall) {
+        val f = recFile(call.getString("name") ?: "") ?: return call.reject("Clip not found")
+        val uri = clipUri(f)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "video/mp4"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = android.content.ClipData.newRawUri("", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(send, "Share clip").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { context.startActivity(chooser); call.resolve() } catch (e: Exception) { call.reject("Could not share") }
+    }
+
+    @PluginMethod
+    fun exportRecording(call: PluginCall) {
+        val f = recFile(call.getString("name") ?: "") ?: return call.reject("Clip not found")
+        if (Build.VERSION.SDK_INT < 29) return call.reject("Export needs Android 10 or newer")
+        val downloads = call.getString("dest") == "downloads"
+        try {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, f.name)
+                put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                put(
+                    android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                    (if (downloads) android.os.Environment.DIRECTORY_DOWNLOADS else android.os.Environment.DIRECTORY_MOVIES) + "/PanicGuard"
+                )
+                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val collection = if (downloads) android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+                else android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            val resolver = context.contentResolver
+            val uri = resolver.insert(collection, values) ?: return call.reject("Could not create file")
+            resolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
+            val done = android.content.ContentValues().apply { put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(uri, done, null, null)
+            val r = JSObject()
+            r.put("path", (if (downloads) "Downloads" else "Movies") + "/PanicGuard/" + f.name)
+            call.resolve(r)
+        } catch (e: Exception) {
+            call.reject(e.message ?: "Export failed")
+        }
+    }
+
+    @PluginMethod
+    fun deleteRecording(call: PluginCall) {
+        val f = recFile(call.getString("name") ?: "") ?: return call.reject("Clip not found")
+        if (f.delete()) call.resolve() else call.reject("Could not delete")
+    }
+
+    @PluginMethod
+    fun deleteAllRecordings(call: PluginCall) {
+        (java.io.File(context.filesDir, "recordings").listFiles() ?: emptyArray()).forEach { it.delete() }
+        call.resolve()
+    }
 }

@@ -92,6 +92,7 @@
     </section>
 
     <section id="settings" class="hidden"></section>
+    <section id="recs" class="hidden"></section>
   </main>
 
   <nav>
@@ -277,19 +278,33 @@ async function pickInto(n) {
   if (!r.number) throw new Error('That contact has no number');
   await saveVals(n === 1 ? { c1Name: r.name, c1Num: r.number } : { c2Name: r.name, c2Num: r.number });
 }
+const haveC = n => !!VALS['c' + n + 'Num'];
+let contactRedraw = null;
+document.addEventListener('click', async e => {
+  const b = e.target.closest && e.target.closest('[data-clear]');
+  if (!b) return;
+  const n = +b.dataset.clear, other = n === 1 ? 2 : 1;
+  if (!haveC(other)) { alert('Keep at least one contact.'); return; }
+  const upd = {}; upd['c' + n + 'Name'] = ''; upd['c' + n + 'Num'] = '';
+  if (VALS.defaultTarget === String(n) || VALS.defaultTarget === 'both') upd.defaultTarget = '';
+  await saveVals(upd);
+  if (contactRedraw) contactRedraw();
+});
 function contactRows() {
   return [1, 2].map(n => {
     const name = VALS['c' + n + 'Name'], num = VALS['c' + n + 'Num'];
-    return `<div class="card"><h2>Contact ${n}</h2>
+    return `<div class="card"><h2>Contact ${n}${n === 2 ? ' (optional)' : ''}</h2>
       <div class="${num ? '' : 'sub'}">${num ? esc(name) + '<br>' + esc(num) : 'Not chosen'}</div>
-      <button class="btn small" data-pick="${n}">${num ? 'CHANGE' : 'CHOOSE FROM PHONE'}</button></div>`;
+      <button class="btn small" data-pick="${n}">${num ? 'CHANGE' : 'CHOOSE FROM PHONE'}</button>
+      ${num ? `<button class="btn small" data-clear="${n}">REMOVE</button>` : ''}</div>`;
   }).join('');
 }
 function wizContacts(prog) {
   const w = $('wiz');
   const draw = () => {
-    const ok = VALS.c1Num && VALS.c2Num;
-    w.innerHTML = prog + `<h1>Emergency contacts</h1><p>Choose two people from your phone book.</p>
+    contactRedraw = draw;
+    const ok = VALS.c1Num || VALS.c2Num;
+    w.innerHTML = prog + `<h1>Emergency contacts</h1><p>Choose one or two people from your phone book. One is enough; the second is optional.</p>
       ${contactRows()}<div id="cerr" class="sub bad"></div>
       <button class="btn primary" id="next" ${ok ? '' : 'disabled'}>NEXT</button>`;
     w.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
@@ -353,11 +368,14 @@ async function renderHome() {
   $('warn').innerHTML = w;
   if ($('fixp')) $('fixp').onclick = () => openSettings();
   $('summary').innerHTML = VALS.setupDone === 'true'
-    ? `<b>Ready</b><br>Contact 1: ${esc(VALS.c1Name || '-')}<br>Contact 2: ${esc(VALS.c2Name || '-')}<br>
+    ? `<b>Ready</b><br>${[1, 2].filter(haveC).map(n => 'Contact ' + n + ': ' + esc(VALS['c' + n + 'Name'])).join('<br>')}<br>
        Unlock: PIN${VALS.bioEnabled === 'true' ? ' + fingerprint/face' : ''}`
     : `<b class="warn">Setup not finished</b><button class="btn primary" id="rs">FINISH SETUP</button>`;
   if ($('rs')) $('rs').onclick = wizStart;
-  if (VALS.setupDone === 'true') { $('panicbox').innerHTML = panicButtonHTML(); bindPanicButton(); }
+  if (VALS.setupDone === 'true') {
+    $('panicbox').innerHTML = panicButtonHTML() + '<button class="btn small" id="testbtn">TEST MODE (sends a TEST text, records 5 seconds)</button>';
+    bindPanicButton(); $('testbtn').onclick = startTestFlow;
+  }
   else $('panicbox').innerHTML = '';
 }
 
@@ -394,37 +412,66 @@ async function startPanicFlow() {
   const s = await permStates();
   if (!s || s.sms !== 'granted') { homeError('Cannot send: SMS permission is off.'); return; }
   if (s.location !== 'granted') { homeError('Cannot start: Location permission is off.'); return; }
+  if (!haveC(1) && !haveC(2)) { homeError('No emergency contact is set.'); return; }
+  const one = haveC(1) && !haveC(2) ? '1' : (!haveC(1) && haveC(2) ? '2' : null);
+  if (one) return doPanic(one);
   const d = VALS.defaultTarget;
-  if (d === '1' || d === '2' || d === 'both') return doPanic(d);
-  chooseTarget();
+  if ((d === '1' && haveC(1)) || (d === '2' && haveC(2)) || d === 'both') return doPanic(d);
+  chooseTarget(false);
 }
-function chooseTarget() {
+function chooseTarget(isTest) {
   const L = $('choose'); let remember = false;
   const draw = () => {
     L.classList.remove('hidden');
     L.innerHTML = `<h1>Alert who?</h1>
-      <button class="btn big" data-t="1">${esc(VALS.c1Name || 'Contact 1')}</button>
-      <button class="btn big" data-t="2">${esc(VALS.c2Name || 'Contact 2')}</button>
-      <button class="btn big primary" data-t="both">BOTH</button>
-      <button class="btn small" id="rem">${remember ? '✓' : '○'} REMEMBER MY CHOICE</button>
+      ${haveC(1) ? `<button class="btn big" data-t="1">${esc(VALS.c1Name || 'Contact 1')}</button>` : ''}
+      ${haveC(2) ? `<button class="btn big" data-t="2">${esc(VALS.c2Name || 'Contact 2')}</button>` : ''}
+      ${haveC(1) && haveC(2) ? '<button class="btn big primary" data-t="both">BOTH</button>' : ''}
+      ${isTest ? '' : `<button class="btn small" id="rem">${remember ? '✓' : '○'} REMEMBER MY CHOICE</button>`}
       <button class="btn small" id="cc">CANCEL</button>`;
     L.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
       const t = b.dataset.t;
       L.classList.add('hidden'); L.innerHTML = '';
       if (remember) { try { await saveVals({ defaultTarget: t }); } catch (e) {} }
-      doPanic(t);
+      if (isTest) doTest(t); else doPanic(t);
     });
-    $('rem').onclick = () => { remember = !remember; draw(); };
+    if ($('rem')) $('rem').onclick = () => { remember = !remember; draw(); };
     $('cc').onclick = () => { L.classList.add('hidden'); L.innerHTML = ''; };
   };
   draw();
 }
-let panicGrace = 0, panicTimer = null;
+let panicGrace = 0, panicTimer = null, testRun = false;
 async function doPanic(t) {
   try { await N('startPanic', { target: t }); }
   catch (e) { homeError('Panic could not start: ' + esc(e.message || e)); return; }
   panicGrace = Date.now() + 6000;
   showPanic();
+}
+async function startTestFlow() {
+  if (!$('panic').classList.contains('hidden') || !$('choose').classList.contains('hidden')) return;
+  await loadVals();
+  const s = await permStates();
+  if (!s || s.sms !== 'granted') { homeError('Cannot test: SMS permission is off.'); return; }
+  if (s.location !== 'granted') { homeError('Cannot test: Location permission is off.'); return; }
+  if (!haveC(1) && !haveC(2)) { homeError('No emergency contact is set.'); return; }
+  if (haveC(1) && haveC(2)) chooseTarget(true); else doTest(haveC(1) ? '1' : '2');
+}
+async function doTest(t) {
+  try { await N('startTest', { target: t }); }
+  catch (e) { homeError('Test could not start: ' + esc(e.message || e)); return; }
+  testRun = true; panicGrace = Date.now() + 6000;
+  showPanic();
+}
+async function showTestResult() {
+  let r = {};
+  try { r = JSON.parse((await N('getTestResult')).json || '{}'); } catch (e) {}
+  const L = $('choose'); L.classList.remove('hidden');
+  const smsLines = (r.msgs || []).map(m => `<div class="msgline"><b>${esc(m.name)}</b>: <span class="${m.status === 'sent' ? 'ok' : 'bad'}">${m.status === 'sent' ? 'TEST SMS SENT ✓' : 'SMS ' + esc(m.status).toUpperCase() + ' ✗'}</span></div>`).join('') || '<div class="bad">No SMS was sent ✗</div>';
+  L.innerHTML = `<h1>Test result</h1><div class="card">${smsLines}</div>
+    <div class="card">${r.clip ? '<b class="ok">5-second clip recorded ✓</b>' : '<b class="bad">No clip recorded ✗</b>'}${r.note ? '<br><span class="warn">' + esc(r.note) + '</span>' : ''}</div>
+    <div class="card">Location: <b>${r.loc === 'live' ? 'live GPS ✓' : r.loc === 'last known' ? 'last known only' : 'not available ✗'}</b></div>
+    <button class="btn big primary" id="tok">OK</button>`;
+  $('tok').onclick = () => { L.classList.add('hidden'); L.innerHTML = ''; };
 }
 function showPanic() {
   builtMode = null;
@@ -448,20 +495,23 @@ function statusHTML(st) {
   const r = st.rec || {};
   let rec = r.on ? `<b class="ok">Recording</b> - ${r.segs || 0} clips saved` : `<b class="warn">Not recording</b>`;
   if (r.note) rec += `<br><span class="warn">${esc(r.note)}</span>`;
-  return `<h1 class="bad">PANIC ACTIVE</h1><div class="sub">Running for ${mins} min</div>
+  return `${st.test ? '<h1 class="warn">TEST MODE</h1>' : '<h1 class="bad">PANIC ACTIVE</h1>'}<div class="sub">Running for ${mins} min</div>
     <div class="card">${loc}</div><div class="card">${rec}</div><div class="card"><h2>Messages</h2>${lines}</div>`;
 }
 async function pollPanic() {
   let st = {};
   try { st = JSON.parse((await N('getPanicState')).json || '{}'); } catch (e) { return; }
-  if (!st.active) { if (Date.now() > panicGrace) hidePanic(); return; }
+  if (!st.active) {
+    if (Date.now() > panicGrace) { const was = testRun; testRun = false; hidePanic(); if (was) showTestResult(); }
+    return;
+  }
   lastPanic = st;
-  const mode = VALS.neutral || 'calc';
+  const mode = (testRun || st.test) ? 'status' : (VALS.neutral || 'calc');
   if (mode === 'status') {
     builtMode = 'status';
-    $('panic').innerHTML = statusHTML(st) + `<button class="btn big primary" id="stopp">UNLOCK TO STOP</button>
-      <div class="sub" style="margin-top:10px">Alerts and recording keep going if you close this screen.</div>`;
-    $('stopp').onclick = unlockToStop;
+    $('panic').innerHTML = statusHTML(st) + `${st.test ? '<div class="sub">Test in progress. It finishes by itself in a few seconds.</div>' : `<button class="btn big primary" id="stopp">UNLOCK TO STOP</button>
+      <div class="sub" style="margin-top:10px">Alerts and recording keep going if you close this screen.</div>`}`;
+    if ($('stopp')) $('stopp').onclick = unlockToStop;
   } else if (builtMode !== mode) buildNeutral(mode);
 }
 function holdBind(el, ms, fn, onTap) {
@@ -536,6 +586,7 @@ async function openSettings() {
 }
 async function renderSettings() {
   await loadVals();
+  contactRedraw = renderSettings;
   const s = await permStates() || {};
   const labels = { contacts:'Contacts', sms:'SMS', location:'Location', bgLocation:'Location all the time',
     camera:'Camera', microphone:'Microphone', notifications:'Notifications', battery:'Battery optimization' };
@@ -560,7 +611,17 @@ async function renderSettings() {
       <div class="sub" style="margin-top:8px">Updates are only sent if you have moved.</div></div>
     <div class="card"><h2>Recordings</h2><div id="recinfo" class="sub">Checking…</div>
       <div class="sub" style="font-size:15px">Clips are saved in 1-minute files inside the app. The Recordings screen (play, export, share, delete) comes in Stage 5.
-      While recording, Android always shows a camera/mic dot and a notification; these cannot be hidden.</div></div>
+      While recording, Android always shows a camera/mic dot and a notification; these cannot be hidden.</div>
+      <button class="btn small" id="orecs">OPEN RECORDINGS</button></div>
+    <div class="card"><h2>Samsung battery guide</h2>
+      <div class="sub" style="font-size:15px;line-height:1.5">Samsung phones stop background apps aggressively. Do these once:<br>
+      1. Settings, Apps, Panic Guard, Battery: choose <b>Unrestricted</b>.<br>
+      2. Settings, Battery and device care, Battery, Background usage limits: add Panic Guard to <b>Never sleeping apps</b>, make sure it is NOT in Sleeping or Deep sleeping apps, and turn off <b>Put unused apps to sleep</b>.<br>
+      3. Settings, Apps, Panic Guard, Permissions: turn OFF <b>Pause app activity if unused</b> (or "Remove permissions if app isn't used"). Otherwise Android can switch off SMS and Location by itself.<br>
+      4. Open Recents, tap the Panic Guard icon, choose <b>Keep open</b>.<br>
+      5. Never use Force stop. It disables the alert until you open the app again.</div>
+      <button class="btn small" id="gbat">OPEN BATTERY SETTINGS</button>
+      <button class="btn small" id="gapp">OPEN ANDROID APP SETTINGS</button></div>
     <div class="card"><h2>Panic log</h2><div id="logbox" class="sub">Loading…</div>
       <button class="btn small" id="clog">CLEAR LOG</button></div>
     <div class="card"><h2>Permissions</h2>${Object.keys(labels).map(k => `<div class="row"><span>${labels[k]}
@@ -602,8 +663,11 @@ async function renderSettings() {
   });
   $('oas2').onclick = () => N('openAppSettings');
   const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
-  $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', '1', '2', 'both'], VALS.defaultTarget || '') }); renderSettings(); };
+  $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', ...(haveC(1) ? ['1'] : []), ...(haveC(2) ? ['2'] : []), ...(haveC(1) && haveC(2) ? ['both'] : [])], VALS.defaultTarget || '') }); renderSettings(); };
   $('sint').onclick = async () => { await saveVals({ intervalMin: String(cyc([1, 2, 5, 10], +(VALS.intervalMin || 2))) }); renderSettings(); };
+  $('orecs').onclick = () => { show('recs'); renderRecs(); };
+  $('gbat').onclick = () => N('openBatterySettings').catch(() => {});
+  $('gapp').onclick = () => N('openAppSettings').catch(() => {});
   $('scam').onclick = async () => { await saveVals({ camFront: VALS.camFront === 'true' ? 'false' : 'true' }); renderSettings(); };
   $('sneu').onclick = async () => { await saveVals({ neutral: cyc(['calc', 'blank', 'status'], VALS.neutral || 'calc') }); renderSettings(); };
   try {
@@ -620,12 +684,60 @@ async function renderSettings() {
   $('rerun').onclick = wizStart;
 }
 
+// ---------------- recordings ----------------
+function clipLabel(n) {
+  const m = /^(panic|test)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/.exec(n);
+  return m ? (m[1] === 'test' ? 'TEST clip ' : 'Panic clip ') + `${m[2]}-${m[3]}-${m[4]} ${m[5]}:${m[6]}:${m[7]}` : n;
+}
+async function renderRecs() {
+  const R = $('recs');
+  let list = [], info = {};
+  try { info = await N('listRecordings'); list = JSON.parse(info.json || '[]').reverse(); } catch (e) {}
+  const mb = b => (b / 1048576).toFixed(1) + ' MB';
+  R.innerHTML = `<h1>Recordings</h1><div class="sub">${list.length} clip${list.length === 1 ? '' : 's'}, ${mb(info.total || 0)} used</div>
+    <button class="btn small" id="rback">BACK TO SETTINGS</button>
+    ${list.map(c => `<div class="card" data-clip="${esc(c.name)}"><b>${esc(clipLabel(c.name))}</b><div class="sub">${mb(c.size)}</div>
+      <button class="btn small" data-act="play">PLAY</button>
+      <button class="btn small" data-act="share">SHARE</button>
+      <button class="btn small" data-act="export">EXPORT</button>
+      <button class="btn small" data-act="delete">DELETE</button>
+      <div class="sub" data-msg></div></div>`).join('') || '<div class="card sub">No recordings yet.</div>'}
+    ${list.length ? '<button class="btn small" id="rdelall">DELETE ALL</button>' : ''}`;
+  $('rback').onclick = () => { show('settings'); renderSettings(); };
+  R.querySelectorAll('[data-clip]').forEach(card => {
+    const name = card.dataset.clip, msg = card.querySelector('[data-msg]');
+    const say = (t, c) => { msg.className = 'sub ' + (c || ''); msg.innerHTML = t; };
+    card.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      const a = b.dataset.act;
+      try {
+        if (a === 'play') await N('playRecording', { name });
+        else if (a === 'share') await N('shareRecording', { name });
+        else if (a === 'export') {
+          msg.innerHTML = '<button class="btn small" data-d="movies">TO MOVIES</button><button class="btn small" data-d="downloads">TO DOWNLOADS</button>';
+          msg.querySelectorAll('[data-d]').forEach(x => x.onclick = async () => {
+            try { const r = await N('exportRecording', { name, dest: x.dataset.d }); say('Saved to ' + esc(r.path), 'ok'); }
+            catch (e) { say(esc(e.message || e), 'bad'); }
+          });
+        } else if (a === 'delete') {
+          if (b.dataset.sure) { await N('deleteRecording', { name }); renderRecs(); }
+          else { b.dataset.sure = '1'; b.textContent = 'TAP AGAIN TO DELETE'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'DELETE'; }, 4000); }
+        }
+      } catch (e) { say(esc(e.message || e), 'bad'); }
+    });
+  });
+  if ($('rdelall')) $('rdelall').onclick = async () => {
+    const b = $('rdelall');
+    if (b.dataset.sure) { await N('deleteAllRecordings'); renderRecs(); }
+    else { b.dataset.sure = '1'; b.textContent = 'TAP AGAIN: DELETE ALL CLIPS'; setTimeout(() => { b.dataset.sure = ''; b.textContent = 'DELETE ALL'; }, 4000); }
+  };
+}
+
 // ---------------- navigation ----------------
 function show(name) {
-  for (const s of ['home','update','settings']) $(s).classList.toggle('hidden', s !== name);
+  for (const s of ['home','update','settings','recs']) $(s).classList.toggle('hidden', s !== name);
   $('n-home').classList.toggle('active', name === 'home');
   $('n-update').classList.toggle('active', name === 'update');
-  $('n-settings').classList.toggle('active', name === 'settings');
+  $('n-settings').classList.toggle('active', name === 'settings' || name === 'recs');
 }
 $('n-home').onclick = () => { show('home'); renderHome(); };
 $('n-settings').onclick = openSettings;
