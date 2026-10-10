@@ -700,18 +700,18 @@ async function renderSettingsInner() {
     try { await navigator.clipboard.writeText(t); alert('Copied. Paste it into a message to your contact.'); } catch (e) { alert(t); }
   };
   $('sneu').onclick = async () => { await saveVals({ neutral: cyc(['calc', 'blank', 'status'], VALS.neutral || 'calc') }); renderSettings(); };
+  $('ssafe').onclick = async () => { const on = VALS.sendSafe !== 'true'; $('ssafe').textContent = (on ? 'ON' : 'OFF') + ': SEND "I\'M SAFE" SMS WHEN I UNLOCK'; await saveVals({ sendSafe: on ? 'true' : 'false' }); renderSettings(); };
+  $('svol').onclick = async () => { const on = VALS.volTriple !== 'true'; $('svol').textContent = (on ? 'ON' : 'OFF') + ': TRIPLE VOLUME PRESS (APP OPEN ONLY)'; await saveVals({ volTriple: on ? 'true' : 'false' }); renderSettings(); };
+  $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };
+  $('rerun').onclick = wizStart;
   try {
     const rr = await N('listRecordings'); const n = JSON.parse(rr.json || '[]').length;
     $('recinfo').textContent = n + ' clip' + (n === 1 ? '' : 's') + ', ' + (rr.total / 1048576).toFixed(1) + ' MB used, ' + (rr.free / 1073741824).toFixed(1) + ' GB free';
   } catch (e) { $('recinfo').textContent = 'Not available.'; }
-  $('ssafe').onclick = async () => { const on = VALS.sendSafe !== 'true'; $('ssafe').textContent = (on ? 'ON' : 'OFF') + ': SEND "I\'M SAFE" SMS WHEN I UNLOCK'; await saveVals({ sendSafe: on ? 'true' : 'false' }); renderSettings(); };
-  $('svol').onclick = async () => { const on = VALS.volTriple !== 'true'; $('svol').textContent = (on ? 'ON' : 'OFF') + ': TRIPLE VOLUME PRESS (APP OPEN ONLY)'; await saveVals({ volTriple: on ? 'true' : 'false' }); renderSettings(); };
-  $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };
   try {
     const log = JSON.parse((await N('getLog')).json || '[]').slice(-15).reverse();
     $('logbox').innerHTML = log.length ? log.map(e => `<div class="msgline">${new Date(e.t).toLocaleString()}<br>${esc(e.m)}</div>`).join('') : 'No events yet.';
   } catch (e) { $('logbox').textContent = 'Not available.'; }
-  $('rerun').onclick = wizStart;
 }
 
 // ---------------- recordings ----------------
