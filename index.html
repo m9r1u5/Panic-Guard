@@ -594,6 +594,11 @@ async function openSettings() {
   renderSettings();
 }
 async function renderSettings() {
+  const mm = document.querySelector('main'); const y = mm ? mm.scrollTop : 0, wy = window.scrollY;
+  await renderSettingsInner();
+  if (mm) mm.scrollTop = y; window.scrollTo(0, wy);
+}
+async function renderSettingsInner() {
   await loadVals();
   contactRedraw = renderSettings;
   const s = await permStates() || {};
@@ -699,8 +704,8 @@ async function renderSettings() {
     const rr = await N('listRecordings'); const n = JSON.parse(rr.json || '[]').length;
     $('recinfo').textContent = n + ' clip' + (n === 1 ? '' : 's') + ', ' + (rr.total / 1048576).toFixed(1) + ' MB used, ' + (rr.free / 1073741824).toFixed(1) + ' GB free';
   } catch (e) { $('recinfo').textContent = 'Not available.'; }
-  $('ssafe').onclick = async () => { await saveVals({ sendSafe: VALS.sendSafe === 'true' ? 'false' : 'true' }); renderSettings(); };
-  $('svol').onclick = async () => { await saveVals({ volTriple: VALS.volTriple === 'true' ? 'false' : 'true' }); renderSettings(); };
+  $('ssafe').onclick = async () => { const on = VALS.sendSafe !== 'true'; $('ssafe').textContent = (on ? 'ON' : 'OFF') + ': SEND "I\'M SAFE" SMS WHEN I UNLOCK'; await saveVals({ sendSafe: on ? 'true' : 'false' }); renderSettings(); };
+  $('svol').onclick = async () => { const on = VALS.volTriple !== 'true'; $('svol').textContent = (on ? 'ON' : 'OFF') + ': TRIPLE VOLUME PRESS (APP OPEN ONLY)'; await saveVals({ volTriple: on ? 'true' : 'false' }); renderSettings(); };
   $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };
   try {
     const log = JSON.parse((await N('getLog')).json || '[]').slice(-15).reverse();
