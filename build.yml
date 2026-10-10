@@ -31,6 +31,7 @@ jobs:
         run: |
           mkdir -p www
           cp index.html www/
+          cp node_modules/@capacitor/core/dist/capacitor.js www/
 
       - name: Create Android project
         run: npx cap add android

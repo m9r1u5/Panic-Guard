@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script src="capacitor.js" onerror="void 0"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Panic Guard</title>
@@ -21,10 +22,10 @@
   .btn.primary { background:var(--amber); color:#000; border-color:var(--amber); }
   .btn.small { min-height:48px; font-size:17px; }
   .btn:disabled { opacity:.35; }
-  nav { display:flex; gap:6px; padding:8px 8px calc(8px + env(safe-area-inset-bottom));
+  nav { display:flex; gap:4px; padding:8px 6px calc(8px + env(safe-area-inset-bottom));
     background:#111; border-top:2px solid #444; }
   nav button { flex:1; min-width:0; padding:0; min-height:58px; border:2px solid #fff; border-radius:14px;
-    background:#000; color:#fff; font-size:12px; font-weight:700; }
+    background:#000; color:#fff; font-size:10.5px; font-weight:700; overflow:hidden; }
   nav button.active { background:#fff; color:#000; }
   .bar { height:14px; background:#333; border-radius:8px; overflow:hidden; margin-top:12px; }
   .bar > div { height:100%; width:0; background:var(--green); }
@@ -117,7 +118,12 @@ const API_LATEST = `https://api.github.com/repos/${OWNER}/${REPO}/releases/lates
 const DEFAULT_MSG = 'EMERGENCY - I need help. This is an automatic alert from my Panic Guard app. Please call me or come to my location.';
 
 const $ = id => document.getElementById(id);
-const PG = window.Capacitor && Capacitor.registerPlugin ? Capacitor.registerPlugin('PanicGuard') : null;
+const PG = (() => {
+  const C = window.Capacitor;
+  if (!C) return null;
+  try { if (typeof C.registerPlugin === 'function') return C.registerPlugin('PanicGuard'); } catch (e) {}
+  return (C.Plugins && C.Plugins.PanicGuard) || null;
+})();
 let installed = { versionName: '?', versionCode: 0 };
 let VALS = {};
 
@@ -665,7 +671,7 @@ async function installLatest() {
     }
     msg.className = 'sub'; msg.textContent = 'Downloading…';
     $('u-barwrap').classList.remove('hidden'); $('u-bar').style.width = '0%';
-    await PG.addListener('downloadProgress', p => { $('u-bar').style.width = p.percent + '%'; });
+    try { await PG.addListener('downloadProgress', p => { $('u-bar').style.width = p.percent + '%'; }); } catch (e) {}
     await N('downloadAndInstall', { url: APK_URL });
     msg.textContent = 'Opening installer…';
   } catch (e) { msg.className = 'sub bad'; msg.textContent = 'Install failed: ' + (e.message || e); }
