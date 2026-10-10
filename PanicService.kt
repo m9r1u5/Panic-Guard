@@ -1,15 +1,16 @@
 package com.m9r1u5.panicguard
 
+import android.Manifest
 import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.location.Location
 import android.location.LocationListener
@@ -20,18 +21,34 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.telephony.SmsManager
+import androidx.camera.core.CameraSelector
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FallbackStrategy
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleService
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 /**
  * Panic service: sends the alert SMS, repeats location SMS when you move,
  * retries failed sends, keeps a local log. Survives app kill (sticky) and reboot.
  */
-class PanicService : Service() {
+class PanicService : LifecycleService() {
 
     companion object {
         const val ACTION_START = "com.m9r1u5.panicguard.START"
@@ -78,17 +95,29 @@ class PanicService : Service() {
     private var wake: PowerManager.WakeLock? = null
     private var receiverOn = false
 
-    override fun onBind(i: Intent?): IBinder? = null
+    // recording
+    private var provider: ProcessCameraProvider? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var recording: Recording? = null
+    private var recActive = false
+    private var recAllowed = false
+    private var recSegs = 0
+    private var recNote = ""
+    private var camRetries = 0
+    private var stopCb: (() -> Unit)? = null
+
+    override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
 
     // ------------------------------------------------------------ lifecycle
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         val action = intent?.action
         if (action == ACTION_STOP) {
             stopPanic(intent?.getBooleanExtra("safe", false) ?: false)
             return START_NOT_STICKY
         }
-        if (!startForegroundSafe()) {
+        if (!startForegroundSafe(action == ACTION_START)) {
             log(this, "Could not start background service (Android refused). Check Location permission.")
             Store.set(this, "pActive", "false")
             stopSelf()
@@ -107,8 +136,10 @@ class PanicService : Service() {
         return START_STICKY
     }
 
-    private fun startForegroundSafe(): Boolean {
-        return try {
+    private fun has(p: String) = ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
+
+    private fun startForegroundSafe(fromApp: Boolean): Boolean {
+        val n: Notification = try {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= 26) {
                 nm.createNotificationChannel(
@@ -116,7 +147,7 @@ class PanicService : Service() {
                         .apply { setShowBadge(false); lockscreenVisibility = Notification.VISIBILITY_SECRET }
                 )
             }
-            val n = NotificationCompat.Builder(this, CHANNEL)
+            NotificationCompat.Builder(this, CHANNEL)
                 .setContentTitle("Background sync")
                 .setContentText("Syncing")
                 .setSmallIcon(android.R.drawable.stat_notify_sync)
@@ -125,15 +156,28 @@ class PanicService : Service() {
                 .setVisibility(NotificationCompat.VISIBILITY_SECRET)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .build()
-            if (Build.VERSION.SDK_INT >= 29) {
-                startForeground(NID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-            } else {
-                startForeground(NID, n)
-            }
-            true
-        } catch (e: Exception) {
-            false
+        } catch (e: Exception) { return false }
+
+        if (Build.VERSION.SDK_INT < 29) {
+            return try { startForeground(NID, n); recAllowed = fromApp && has(Manifest.permission.CAMERA); true }
+            catch (e: Exception) { false }
         }
+        val loc = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        // Camera/microphone types may only be started while the app is on screen (Android 11+),
+        // never from a boot or background restart.
+        var av = 0
+        if (fromApp && Build.VERSION.SDK_INT >= 30) {
+            if (has(Manifest.permission.CAMERA)) av = av or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (has(Manifest.permission.RECORD_AUDIO)) av = av or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        if (av != 0) {
+            try {
+                startForeground(NID, n, loc or av)
+                recAllowed = (av and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA) != 0
+                return true
+            } catch (e: Exception) { log(this, "Camera/mic service type refused: ${e.message}") }
+        }
+        return try { startForeground(NID, n, loc); recAllowed = false; true } catch (e: Exception) { false }
     }
 
     private fun targetsFrom(t: String) = when (t) { "1" -> listOf(1); "2" -> listOf(2); else -> listOf(1, 2) }
@@ -157,6 +201,10 @@ class PanicService : Service() {
             receiverOn = true
         }
         startLocation()
+        if (isNew) {
+            if (recAllowed) startRecording()
+            else { recNote = "Recording off: camera permission or Android refused"; log(this, recNote) }
+        }
 
         if (isNew) {
             // Send as soon as the first fresh fix arrives, or after 5 seconds with what we have.
@@ -185,6 +233,11 @@ class PanicService : Service() {
         try { lm?.removeUpdates(locListener) } catch (e: Exception) { }
         Store.set(this, "pActive", "false")
         running = false
+        stopRecordingThen { finishStop() }
+    }
+
+    private fun finishStop() {
+        try { provider?.unbindAll() } catch (e: Exception) { }
         saveState(false)
         if (receiverOn) { try { unregisterReceiver(sentReceiver) } catch (e: Exception) { }; receiverOn = false }
         try { wake?.let { if (it.isHeld) it.release() } } catch (e: Exception) { }
@@ -196,6 +249,7 @@ class PanicService : Service() {
         running = false
         handler.removeCallbacksAndMessages(null)
         try { lm?.removeUpdates(locListener) } catch (e: Exception) { }
+        try { provider?.unbindAll() } catch (e: Exception) { }
         if (receiverOn) { try { unregisterReceiver(sentReceiver) } catch (e: Exception) { }; receiverOn = false }
         try { wake?.let { if (it.isHeld) it.release() } } catch (e: Exception) { }
         super.onDestroy()
@@ -344,6 +398,109 @@ class PanicService : Service() {
         }, d)
     }
 
+    // ------------------------------------------------------------ recording (CameraX, no preview)
+
+    private fun recDir() = File(filesDir, "recordings").apply { mkdirs() }
+
+    private fun startRecording() {
+        recActive = true
+        val f = ProcessCameraProvider.getInstance(this)
+        f.addListener({
+            try {
+                val p = f.get()
+                provider = p
+                val rec = Recorder.Builder()
+                    .setQualitySelector(QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+                    .build()
+                val vc = VideoCapture.withOutput(rec)
+                videoCapture = vc
+                val front = Store.get(this, "camFront") == "true"
+                var sel = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                if (!p.hasCamera(sel)) sel = if (front) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                p.unbindAll()
+                p.bindToLifecycle(this, sel, vc)
+                startSegment()
+            } catch (e: Exception) {
+                recActive = false
+                recNote = "Camera failed: ${e.message}"
+                log(this, recNote)
+                saveState()
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private val segRunnable = Runnable { recording?.stop() }
+
+    private fun buzz() {
+        try {
+            val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= 26)
+                v.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 150, 100, 150, 100, 150), -1))
+        } catch (e: Exception) { }
+    }
+
+    private fun startSegment() {
+        if (!recActive || !running) return
+        if (filesDir.usableSpace < 250L * 1024 * 1024) {
+            recActive = false
+            recNote = "Recording stopped: storage almost full"
+            log(this, recNote)
+            buzz()
+            saveState()
+            return
+        }
+        val vc = videoCapture ?: return
+        val file = File(recDir(), "panic_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4")
+        try {
+            var pr = vc.output.prepareRecording(this, FileOutputOptions.Builder(file).build())
+            if (has(Manifest.permission.RECORD_AUDIO)) pr = pr.withAudioEnabled()
+            recording = pr.start(ContextCompat.getMainExecutor(this)) { ev -> onVideoEvent(ev, file) }
+            handler.postDelayed(segRunnable, 60_000)
+            if (!recNote.startsWith("Recording stopped")) recNote = ""
+        } catch (e: Exception) {
+            log(this, "Could not start segment: ${e.message}")
+            camRetries++
+            if (camRetries > 10) { recActive = false; recNote = "Recording stopped: camera error"; buzz() }
+            else handler.postDelayed({ startSegment() }, 3000)
+        }
+        saveState()
+    }
+
+    private fun onVideoEvent(ev: VideoRecordEvent, file: File) {
+        if (ev !is VideoRecordEvent.Finalize) return
+        recording = null
+        handler.removeCallbacks(segRunnable)
+        val err = ev.hasError()
+        if (err) {
+            log(this, "Recording clip problem (code ${ev.error})")
+            if (file.exists() && file.length() == 0L) file.delete()
+        } else {
+            recSegs++
+            log(this, "Saved clip ${file.name}")
+        }
+        val cb = stopCb
+        if (cb != null) { stopCb = null; cb(); return }
+        if (recActive && running) {
+            if (err) {
+                camRetries++
+                if (camRetries > 10) { recActive = false; recNote = "Recording stopped: camera error"; buzz() }
+                else handler.postDelayed({ startSegment() }, 3000)
+            } else { camRetries = 0; startSegment() }
+        }
+        saveState()
+    }
+
+    private fun stopRecordingThen(cb: () -> Unit) {
+        recActive = false
+        val r = recording
+        if (r == null) { cb(); return }
+        var done = false
+        val once: () -> Unit = { if (!done) { done = true; cb() } }
+        stopCb = once
+        try { r.stop() } catch (e: Exception) { once(); return }
+        handler.postDelayed({ once() }, 4000)
+    }
+
     // ------------------------------------------------------------ state for the UI
 
     private fun saveState(active: Boolean = true) {
@@ -364,6 +521,7 @@ class PanicService : Service() {
                 .put("status", m.status).put("attempts", m.attempts).put("t", m.t))
         }
         o.put("msgs", arr)
+        o.put("rec", JSONObject().put("on", recActive).put("segs", recSegs).put("note", recNote).put("allowed", recAllowed))
         Store.set(this, "pState", o.toString())
     }
 }

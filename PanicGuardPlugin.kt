@@ -374,6 +374,20 @@ class PanicGuardPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun listRecordings(call: PluginCall) {
+        val dir = java.io.File(context.filesDir, "recordings")
+        val arr = org.json.JSONArray()
+        var total = 0L
+        (dir.listFiles() ?: emptyArray()).sortedBy { it.name }.forEach {
+            total += it.length()
+            arr.put(org.json.JSONObject().put("name", it.name).put("size", it.length()).put("t", it.lastModified()))
+        }
+        val r = JSObject()
+        r.put("json", arr.toString()); r.put("total", total); r.put("free", context.filesDir.usableSpace)
+        call.resolve(r)
+    }
+
+    @PluginMethod
     fun vibrate(call: PluginCall) {
         val ms = (call.getInt("ms") ?: 200).toLong()
         try {

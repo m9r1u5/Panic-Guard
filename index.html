@@ -54,6 +54,14 @@
   #plabel { position:relative; font-size:44px; font-weight:900; text-align:center; pointer-events:none; }
   #plabel small { display:block; font-size:16px; font-weight:700; margin-top:6px; }
   #choose { z-index:45; } #panic { z-index:40; }
+  .calc { max-width:420px; margin:0 auto; height:100%; display:flex; flex-direction:column; justify-content:flex-end; }
+  #cd { background:#222; color:#fff; font-size:54px; text-align:right; padding:18px 14px; border-radius:12px;
+    margin-bottom:12px; overflow:hidden; white-space:nowrap; user-select:none; -webkit-user-select:none; touch-action:none; }
+  .ckeys { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .ckeys button { min-height:72px; font-size:28px; border:0; border-radius:14px; background:#333; color:#fff;
+    user-select:none; -webkit-user-select:none; touch-action:none; }
+  .ckeys button.op { background:#ff9500; } .ckeys button.fn { background:#555; }
+  #blank { position:fixed; inset:0; background:#000; }
   .msgline { padding:8px 0; border-bottom:1px solid #333; }
 </style>
 </head>
@@ -66,6 +74,8 @@
       <div id="warn"></div>
       <div class="card" id="summary"></div>
       <div id="panicbox"></div>
+      <div class="card sub" style="font-size:15px"><b>Good to know:</b> while recording, Android always shows a camera/microphone
+        dot at the top of the screen and a small notification (named "Background sync"). Android does not allow apps to hide these.</div>
     </section>
 
     <section id="update" class="hidden">
@@ -411,17 +421,16 @@ async function doPanic(t) {
   showPanic();
 }
 function showPanic() {
+  builtMode = null;
   $('panic').classList.remove('hidden');
   clearInterval(panicTimer);
   pollPanic(); panicTimer = setInterval(pollPanic, 1500);
 }
-function hidePanic() { clearInterval(panicTimer); $('panic').classList.add('hidden'); $('panic').innerHTML = ''; }
+function hidePanic() { builtMode = null; const pk = document.getElementById('peekbox'); if (pk) pk.remove(); clearInterval(panicTimer); $('panic').classList.add('hidden'); $('panic').innerHTML = ''; }
 const ST = { sent: ['SENT ✓', 'ok'], failed: ['FAILED - retrying', 'bad'], sending: ['Sending…', 'warn'],
   queued: ['Queued', 'warn'], superseded: ['Replaced by newer', 'sub'], 'gave up': ['Gave up', 'bad'] };
-async function pollPanic() {
-  let st = {};
-  try { st = JSON.parse((await N('getPanicState')).json || '{}'); } catch (e) { return; }
-  if (!st.active) { if (Date.now() > panicGrace) hidePanic(); return; }
+let lastPanic = {}, builtMode = null;
+function statusHTML(st) {
   const mins = Math.floor((Date.now() - st.startedAt) / 60000);
   let loc = 'Searching for GPS…';
   if (st.loc) loc = (st.loc.fresh ? 'Live location' : 'Last known location (' + Math.round(st.loc.ageSec / 60) + ' min old)') +
@@ -430,11 +439,73 @@ async function pollPanic() {
     const [t, c] = ST[m.status] || [m.status, ''];
     return `<div class="msgline"><b>${esc(m.name)}</b> (${m.kind}) <span class="${c}">${t}</span>${m.attempts > 1 ? ' try ' + m.attempts : ''}</div>`;
   }).join('') || '<div class="sub">Preparing first message…</div>';
-  $('panic').innerHTML = `<h1 class="bad">PANIC ACTIVE</h1><div class="sub">Running for ${mins} min</div>
-    <div class="card">${loc}</div><div class="card"><h2>Messages</h2>${lines}</div>
-    <button class="btn big primary" id="stopp">UNLOCK TO STOP</button>
-    <div class="sub" style="margin-top:10px">Alerts keep sending if you close this screen.</div>`;
-  $('stopp').onclick = unlockToStop;
+  const r = st.rec || {};
+  let rec = r.on ? `<b class="ok">Recording</b> - ${r.segs || 0} clips saved` : `<b class="warn">Not recording</b>`;
+  if (r.note) rec += `<br><span class="warn">${esc(r.note)}</span>`;
+  return `<h1 class="bad">PANIC ACTIVE</h1><div class="sub">Running for ${mins} min</div>
+    <div class="card">${loc}</div><div class="card">${rec}</div><div class="card"><h2>Messages</h2>${lines}</div>`;
+}
+async function pollPanic() {
+  let st = {};
+  try { st = JSON.parse((await N('getPanicState')).json || '{}'); } catch (e) { return; }
+  if (!st.active) { if (Date.now() > panicGrace) hidePanic(); return; }
+  lastPanic = st;
+  const mode = VALS.neutral || 'calc';
+  if (mode === 'status') {
+    builtMode = 'status';
+    $('panic').innerHTML = statusHTML(st) + `<button class="btn big primary" id="stopp">UNLOCK TO STOP</button>
+      <div class="sub" style="margin-top:10px">Alerts and recording keep going if you close this screen.</div>`;
+    $('stopp').onclick = unlockToStop;
+  } else if (builtMode !== mode) buildNeutral(mode);
+}
+function holdBind(el, ms, fn, onTap) {
+  let t = null, fired = false;
+  el.addEventListener('pointerdown', e => { e.preventDefault(); fired = false; clearTimeout(t); t = setTimeout(() => { fired = true; fn(); }, ms); });
+  const end = ev => { clearTimeout(t); if (!fired && onTap && ev.type === 'pointerup') onTap(); };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => el.addEventListener(ev, end));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+function peek() {
+  if (document.getElementById('peekbox')) return;
+  const d = document.createElement('div');
+  d.id = 'peekbox'; d.className = 'full'; d.style.zIndex = 41;
+  d.innerHTML = statusHTML(lastPanic) + '<div class="sub">Tap to close</div>';
+  d.onclick = () => d.remove();
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), 8000);
+}
+function buildNeutral(mode) {
+  const P = $('panic'); builtMode = mode;
+  if (mode === 'blank') {
+    P.innerHTML = '<div id="blank"></div>';
+    holdBind($('blank'), 2000, unlockToStop);
+    return;
+  }
+  const cs = { acc: null, op: null, cur: '0', fresh: true };
+  const fmt = n => String(parseFloat(Number(n).toPrecision(10)));
+  const calc = () => {
+    const a = cs.acc, b = parseFloat(cs.cur);
+    return cs.op === '+' ? a + b : cs.op === '−' ? a - b : cs.op === '×' ? a * b : cs.op === '÷' ? (b === 0 ? 0 : a / b) : b;
+  };
+  const show = () => { $('cd').textContent = cs.cur; };
+  const press = k => {
+    if (/^[0-9]$/.test(k)) { cs.cur = cs.fresh || cs.cur === '0' ? k : (cs.cur.length < 12 ? cs.cur + k : cs.cur); cs.fresh = false; }
+    else if (k === '.') { if (cs.fresh) { cs.cur = '0.'; cs.fresh = false; } else if (!cs.cur.includes('.')) cs.cur += '.'; }
+    else if (k === 'C') { cs.acc = null; cs.op = null; cs.cur = '0'; cs.fresh = true; }
+    else if (k === '⌫') { cs.cur = cs.cur.length > 1 ? cs.cur.slice(0, -1) : '0'; }
+    else if (k === '=') { if (cs.op) { cs.cur = fmt(calc()); cs.acc = null; cs.op = null; cs.fresh = true; } }
+    else { if (cs.op && !cs.fresh) { cs.cur = fmt(calc()); } cs.acc = parseFloat(cs.cur); cs.op = k; cs.fresh = true; }
+    show();
+  };
+  const keys = ['C','⌫','÷','×','7','8','9','−','4','5','6','+','1','2','3','=','0','.'];
+  P.innerHTML = `<div class="calc"><div id="cd">0</div><div class="ckeys">${keys.map(k =>
+    `<button data-k="${k}" class="${'÷×−+='.includes(k) ? 'op' : (k === 'C' || k === '⌫') ? 'fn' : ''}" ${k === '0' ? 'style="grid-column:span 2"' : ''}>${k}</button>`).join('')}</div></div>`;
+  P.querySelectorAll('.ckeys button').forEach(b => {
+    const k = b.dataset.k;
+    if (k === '=') holdBind(b, 2000, unlockToStop, () => press('='));
+    else b.addEventListener('click', () => press(k));
+  });
+  holdBind($('cd'), 2000, peek);
 }
 async function unlockToStop() {
   await loadVals();
@@ -475,9 +546,15 @@ async function renderSettings() {
     <div class="card"><h2>Panic</h2>
       <button class="btn small" id="stt">WHO TO ALERT: ${TARGET_LABEL[VALS.defaultTarget || '']}</button>
       <button class="btn small" id="sint">LOCATION UPDATE EVERY ${VALS.intervalMin || 2} MIN</button>
+      <button class="btn small" id="scam">CAMERA: ${VALS.camFront === 'true' ? 'FRONT' : 'BACK'}</button>
+      <button class="btn small" id="sneu">SCREEN WHILE ACTIVE: ${({calc:'CALCULATOR',blank:'BLANK',status:'STATUS'})[VALS.neutral || 'calc']}</button>
+      <div class="sub" style="margin:6px 0">Calculator or blank: hold the "=" key (or anywhere on blank) for 2 seconds to enter your PIN. On the calculator, hold the number display for 2 seconds to peek at message status.</div>
       <button class="btn small" id="ssafe">${VALS.sendSafe === 'true' ? 'ON' : 'OFF'}: SEND "I'M SAFE" SMS WHEN I UNLOCK</button>
       <button class="btn small" id="svol">${VALS.volTriple === 'true' ? 'ON' : 'OFF'}: TRIPLE VOLUME PRESS (APP OPEN ONLY)</button>
       <div class="sub" style="margin-top:8px">Updates are only sent if you have moved.</div></div>
+    <div class="card"><h2>Recordings</h2><div id="recinfo" class="sub">Checking…</div>
+      <div class="sub" style="font-size:15px">Clips are saved in 1-minute files inside the app. The Recordings screen (play, export, share, delete) comes in Stage 5.
+      While recording, Android always shows a camera/mic dot and a notification; these cannot be hidden.</div></div>
     <div class="card"><h2>Panic log</h2><div id="logbox" class="sub">Loading…</div>
       <button class="btn small" id="clog">CLEAR LOG</button></div>
     <div class="card"><h2>Permissions</h2>${Object.keys(labels).map(k => `<div class="row"><span>${labels[k]}
@@ -521,6 +598,12 @@ async function renderSettings() {
   const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
   $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', '1', '2', 'both'], VALS.defaultTarget || '') }); renderSettings(); };
   $('sint').onclick = async () => { await saveVals({ intervalMin: String(cyc([1, 2, 5, 10], +(VALS.intervalMin || 2))) }); renderSettings(); };
+  $('scam').onclick = async () => { await saveVals({ camFront: VALS.camFront === 'true' ? 'false' : 'true' }); renderSettings(); };
+  $('sneu').onclick = async () => { await saveVals({ neutral: cyc(['calc', 'blank', 'status'], VALS.neutral || 'calc') }); renderSettings(); };
+  try {
+    const rr = await N('listRecordings'); const n = JSON.parse(rr.json || '[]').length;
+    $('recinfo').textContent = n + ' clip' + (n === 1 ? '' : 's') + ', ' + (rr.total / 1048576).toFixed(1) + ' MB used, ' + (rr.free / 1073741824).toFixed(1) + ' GB free';
+  } catch (e) { $('recinfo').textContent = 'Not available.'; }
   $('ssafe').onclick = async () => { await saveVals({ sendSafe: VALS.sendSafe === 'true' ? 'false' : 'true' }); renderSettings(); };
   $('svol').onclick = async () => { await saveVals({ volTriple: VALS.volTriple === 'true' ? 'false' : 'true' }); renderSettings(); };
   $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };

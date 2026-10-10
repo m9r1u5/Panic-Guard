@@ -48,6 +48,11 @@ def deps(s):
     add = (
         '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"'
         '\n    implementation "androidx.biometric:biometric:1.1.0"'
+        '\n    implementation "androidx.camera:camera-core:1.3.4"'
+        '\n    implementation "androidx.camera:camera-camera2:1.3.4"'
+        '\n    implementation "androidx.camera:camera-lifecycle:1.3.4"'
+        '\n    implementation "androidx.camera:camera-video:1.3.4"'
+        '\n    implementation "androidx.lifecycle:lifecycle-service:2.6.2"'
     )
     return s.replace("dependencies {", "dependencies {" + add, 1)
 edit("android/app/build.gradle", deps)
@@ -58,7 +63,7 @@ PERMS = [
     "READ_CONTACTS", "SEND_SMS", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION",
     "ACCESS_BACKGROUND_LOCATION", "CAMERA", "RECORD_AUDIO", "POST_NOTIFICATIONS",
     "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "USE_BIOMETRIC", "VIBRATE",
-    "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK",
+    "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "FOREGROUND_SERVICE_CAMERA", "FOREGROUND_SERVICE_MICROPHONE", "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK",
 ]
 FEATURES = ["android.hardware.telephony", "android.hardware.camera", "android.hardware.location.gps"]
 
@@ -74,7 +79,7 @@ def manifest(s):
     if "PanicService" not in s:
         comps = (
             '        <service android:name=".PanicService" android:exported="false" '
-            'android:foregroundServiceType="location" />\n'
+            'android:foregroundServiceType="location|camera|microphone" />\n'
             '        <receiver android:name=".BootReceiver" android:exported="true">\n'
             '            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>\n'
             '        </receiver>\n'
