@@ -40,6 +40,8 @@ import androidx.lifecycle.LifecycleService
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -73,12 +75,13 @@ class PanicService : LifecycleService() {
         }
     }
 
-    private class Msg(val id: Int, val toName: String, val to: String, val kind: String, val text: String) {
+    private class Msg(val id: Int, val toName: String, val to: String, val kind: String, val text: String, val isData: Boolean = false) {
         var attempts = 0
         var status = "queued"
         var partsOk = 0
         var partsFail = 0
         var partsTotal = 1
+        var fallback: (() -> Unit)? = null
         val t = System.currentTimeMillis()
     }
 
@@ -251,11 +254,22 @@ class PanicService : LifecycleService() {
         targets = targetsFrom(Store.get(this, "pTarget", "both"))
         if (safe) {
             val text = "I am safe now. The panic alert has been stopped. (Panic Guard)"
-            for (n in targets) {
+            val am = Store.get(this, "alertMode", "sms")
+            if (am != "data") for (n in targets) {
                 val num = Store.get(this, "c${n}Num")
                 if (num.isBlank()) continue
                 try { smsManager().sendTextMessage(num, null, text, null, null) } catch (e: Exception) { }
             }
+            val tp = Store.get(this, "dataTopic")
+            if (am != "sms" && tp.isNotBlank()) Thread {
+                try {
+                    val c = URL("https://ntfy.sh/" + tp).openConnection() as HttpURLConnection
+                    c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 10000; c.readTimeout = 10000
+                    c.setRequestProperty("Title", "Panic Guard: safe")
+                    c.outputStream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                    c.responseCode; c.disconnect()
+                } catch (e: Exception) { }
+            }.start()
             log(this, "I'm safe SMS handed to the phone")
         }
         log(this, if (testMode) "Test finished" else "Panic stopped (unlocked)")
@@ -356,15 +370,69 @@ class PanicService : LifecycleService() {
         val text = buildText(kind)
         sentLoc = if (fresh) lastLoc else null
         if (!fresh) needFollowUp = true
-        for (n in targets) {
-            val num = Store.get(this, "c${n}Num")
-            if (num.isBlank()) { log(this, "Contact $n has no number"); continue }
-            val m = Msg(nextId++, Store.get(this, "c${n}Name", "Contact $n"), num, kind, text)
-            msgs.add(m)
-            log(this, "Sending $kind SMS to ${m.toName}")
-            sendMsg(m)
+        val mode = Store.get(this, "alertMode", "sms")
+        val sendSms: () -> Unit = {
+            var idx = 0
+            for (n in targets) {
+                val num = Store.get(this, "c${n}Num")
+                if (num.isBlank()) { log(this, "Contact $n has no number"); continue }
+                val m = Msg(nextId++, Store.get(this, "c${n}Name", "Contact $n"), num, kind, text)
+                msgs.add(m)
+                log(this, "Queued $kind SMS for ${m.toName} (contact $n)")
+                // Stagger the messages so the phone/SIM does not drop the second one.
+                handler.postDelayed({ if (running) sendMsg(m) }, idx * 2500L)
+                idx++
+            }
+        }
+        if (mode == "sms" || mode == "both") sendSms()
+        if (mode != "sms") {
+            val topic = Store.get(this, "dataTopic")
+            if (topic.isBlank()) {
+                log(this, "Data alert skipped: no alert code set")
+                if (mode == "auto") sendSms()
+            } else {
+                val m = Msg(nextId++, "Data alert (internet)", topic, kind, text, true)
+                if (mode == "auto") m.fallback = sendSms
+                msgs.add(m)
+                log(this, "Sending $kind data alert")
+                sendData(m)
+            }
         }
         saveState()
+    }
+
+    private fun sendData(m: Msg) {
+        m.attempts++
+        m.status = "sending"
+        saveState()
+        val test = testMode
+        Thread {
+            var ok = false
+            try {
+                val c = URL("https://ntfy.sh/" + m.to).openConnection() as HttpURLConnection
+                c.requestMethod = "POST"
+                c.doOutput = true
+                c.connectTimeout = 10000
+                c.readTimeout = 10000
+                c.setRequestProperty("Title", if (test) "Panic Guard TEST" else "PANIC ALERT")
+                c.setRequestProperty("Priority", "5")
+                c.setRequestProperty("Tags", "rotating_light")
+                c.outputStream.use { it.write(m.text.toByteArray(Charsets.UTF_8)) }
+                ok = c.responseCode in 200..299
+                c.disconnect()
+            } catch (e: Exception) { }
+            handler.post {
+                m.status = if (ok) "sent" else "failed"
+                log(this, if (ok) "Data alert SENT (${m.kind})" else "Data alert FAILED (try ${m.attempts}), will retry")
+                if (!ok && running) {
+                    val fb = m.fallback
+                    if (fb != null) { m.fallback = null; log(this, "No internet: sending by SMS instead"); fb() }
+                    scheduleRetry(m)
+                }
+                saveState()
+                checkTestDone()
+            }
+        }.start()
     }
 
     private fun smsManager(): SmsManager {
@@ -425,7 +493,7 @@ class PanicService : LifecycleService() {
         handler.postDelayed({
             if (running && m.status == "failed") {
                 val newer = msgs.any { it.id > m.id && it.to == m.to && it.status == "sent" }
-                if (m.kind == "update" && newer) { m.status = "superseded"; saveState() } else sendMsg(m)
+                if (m.kind == "update" && newer) { m.status = "superseded"; saveState() } else if (m.isData) sendData(m) else sendMsg(m)
             }
         }, d)
     }
@@ -441,16 +509,12 @@ class PanicService : LifecycleService() {
             try {
                 val p = f.get()
                 provider = p
-                val rec = Recorder.Builder()
-                    .setQualitySelector(QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
-                    .build()
-                val vc = VideoCapture.withOutput(rec)
-                videoCapture = vc
-                val front = Store.get(this, "camFront") == "true"
-                var sel = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-                if (!p.hasCamera(sel)) sel = if (front) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                var mode = Store.get(this, "camMode")
+                if (mode.isBlank()) mode = if (Store.get(this, "camFront") == "false") "back" else "front"
+                camMode = mode
+                curFront = mode != "back"
                 p.unbindAll()
-                p.bindToLifecycle(this, sel, vc)
+                bindCam(p, curFront)
                 startSegment()
             } catch (e: Exception) {
                 recActive = false
@@ -461,6 +525,31 @@ class PanicService : LifecycleService() {
                 checkTestDone()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private var camMode = "front"
+    private var curFront = true
+
+    private fun bindCam(p: ProcessCameraProvider, front: Boolean) {
+        val rec = Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(Quality.SD, FallbackStrategy.lowerQualityOrHigherThan(Quality.SD)))
+            .build()
+        val vc = VideoCapture.withOutput(rec)
+        var sel = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+        if (!p.hasCamera(sel)) sel = if (front) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+        p.unbindAll()
+        p.bindToLifecycle(this, sel, vc)
+        videoCapture = vc
+    }
+
+    private fun swapCamera() {
+        if (camMode != "both" || testMode) return
+        try {
+            val p = provider ?: return
+            val next = !curFront
+            bindCam(p, next)
+            curFront = next
+        } catch (e: Exception) { log(this, "Camera switch failed: ${e.message}") }
     }
 
     private val segRunnable = Runnable { recording?.stop() }
@@ -522,7 +611,7 @@ class PanicService : LifecycleService() {
                 camRetries++
                 if (camRetries > 10) { recActive = false; recNote = "Recording stopped: camera error"; buzz() }
                 else handler.postDelayed({ startSegment() }, 3000)
-            } else { camRetries = 0; startSegment() }
+            } else { camRetries = 0; swapCamera(); startSegment() }
         }
         saveState()
     }

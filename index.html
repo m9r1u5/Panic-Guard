@@ -278,6 +278,11 @@ async function pickInto(n) {
   if (!r.number) throw new Error('That contact has no number');
   await saveVals(n === 1 ? { c1Name: r.name, c1Num: r.number } : { c2Name: r.name, c2Num: r.number });
 }
+const CAMLBL = { front:'FRONT', back:'BACK', both:'BOTH (ALTERNATE)' };
+const ALMLBL = { sms:'TEXT (SMS)', auto:'INTERNET FIRST, SMS BACKUP', data:'INTERNET (DATA / WIFI)', both:'TEXT + INTERNET' };
+const camMode = () => VALS.camMode || (VALS.camFront === 'false' ? 'back' : 'front');
+function newTopic() { const a = new Uint8Array(12); crypto.getRandomValues(a); return 'pg-' + Array.from(a, b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join(''); }
+function topicText() { const t = VALS.dataTopic; return 'Panic Guard emergency alerts: 1) Install the free ntfy app (Play Store). 2) Open it, tap +, and subscribe to the topic: ' + t + ' (leave the server as ntfy.sh). Or open https://ntfy.sh/' + t + ' in a browser and tap Subscribe. Turn notifications on and set them to high priority. When I press panic you will get my location here.'; }
 const haveC = n => !!VALS['c' + n + 'Num'];
 let contactRedraw = null;
 document.addEventListener('click', async e => {
@@ -410,8 +415,10 @@ async function startPanicFlow() {
   await loadVals();
   if (VALS.setupDone !== 'true') { wizStart(); return; }
   const s = await permStates();
-  if (!s || s.sms !== 'granted') { homeError('Cannot send: SMS permission is off.'); return; }
+  const dataOnly = VALS.alertMode === 'data';
+  if (!s || (!dataOnly && s.sms !== 'granted')) { homeError('Cannot send: SMS permission is off.'); return; }
   if (s.location !== 'granted') { homeError('Cannot start: Location permission is off.'); return; }
+  if (dataOnly) { if (!VALS.dataTopic) { homeError('Internet alert has no code yet. Open Settings, Internet alert.'); return; } return doPanic('both'); }
   if (!haveC(1) && !haveC(2)) { homeError('No emergency contact is set.'); return; }
   const one = haveC(1) && !haveC(2) ? '1' : (!haveC(1) && haveC(2) ? '2' : null);
   if (one) return doPanic(one);
@@ -451,7 +458,9 @@ async function startTestFlow() {
   if (!$('panic').classList.contains('hidden') || !$('choose').classList.contains('hidden')) return;
   await loadVals();
   const s = await permStates();
-  if (!s || s.sms !== 'granted') { homeError('Cannot test: SMS permission is off.'); return; }
+  const dataOnlyT = VALS.alertMode === 'data';
+  if (!s || (!dataOnlyT && s.sms !== 'granted')) { homeError('Cannot test: SMS permission is off.'); return; }
+  if (dataOnlyT) { if (!VALS.dataTopic) { homeError('Internet alert has no code yet. Open Settings, Internet alert.'); return; } return doTest('both'); }
   if (s.location !== 'granted') { homeError('Cannot test: Location permission is off.'); return; }
   if (!haveC(1) && !haveC(2)) { homeError('No emergency contact is set.'); return; }
   if (haveC(1) && haveC(2)) chooseTarget(true); else doTest(haveC(1) ? '1' : '2');
@@ -600,10 +609,18 @@ async function renderSettings() {
       <button class="btn small" id="bio">${VALS.bioEnabled === 'true' ? 'DISABLE' : 'ENABLE'} FINGERPRINT / FACE</button>
       <button class="btn small" id="both">${VALS.requireBoth === 'true' ? 'ON' : 'OFF'}: REQUIRE PIN AND BIOMETRIC</button>
       <div class="sub" style="margin-top:8px">When "require both" is on, stopping a panic needs both.</div></div>
+    <div class="card"><h2>How to alert</h2>
+      <button class="btn small" id="salm">ALERT BY: ${ALMLBL[VALS.alertMode || 'sms']}</button>
+      <div class="sub" style="margin:6px 0">TEXT uses SMS (needs airtime or an SMS bundle). INTERNET FIRST tries data/wifi, and if that fails the app texts instead (best for saving airtime). INTERNET works on mobile data or wifi with no airtime, but each contact must first install the free <b>ntfy</b> app and subscribe to your code below. BOTH sends both ways.</div>
+      ${(VALS.alertMode || 'sms') !== 'sms' ? `<div class="sub" style="margin:6px 0">Your alert code:<br><b style="font-size:18px;word-break:break-all">${esc(VALS.dataTopic || 'not made yet')}</b></div>
+      <button class="btn small" id="shtop">SEND SETUP STEPS TO A CONTACT</button>
+      <button class="btn small" id="ntop">MAKE A NEW CODE</button>
+      <div class="sub" style="margin-top:6px">Keep the code private: anyone who knows it can read your alerts. Use TEST on the home screen to check your contact receives it.</div>` : ''}</div>
     <div class="card"><h2>Panic</h2>
       <button class="btn small" id="stt">WHO TO ALERT: ${TARGET_LABEL[VALS.defaultTarget || '']}</button>
       <button class="btn small" id="sint">LOCATION UPDATE EVERY ${VALS.intervalMin || 2} MIN</button>
-      <button class="btn small" id="scam">CAMERA: ${VALS.camFront === 'true' ? 'FRONT' : 'BACK'}</button>
+      <button class="btn small" id="scam">CAMERA: ${CAMLBL[camMode()]}</button>
+      <div class="sub" style="margin:6px 0">BOTH = the phone alternates: one clip from the front camera, the next from the back (Android cannot film with both at once). Test runs record one front clip.</div>
       <button class="btn small" id="sneu">SCREEN WHILE ACTIVE: ${({calc:'CALCULATOR',blank:'BLANK',status:'STATUS'})[VALS.neutral || 'calc']}</button>
       <div class="sub" style="margin:6px 0">Calculator or blank: hold the "=" key (or anywhere on blank) for 2 seconds to enter your PIN. On the calculator, hold the number display for 2 seconds to peek at message status.</div>
       <button class="btn small" id="ssafe">${VALS.sendSafe === 'true' ? 'ON' : 'OFF'}: SEND "I'M SAFE" SMS WHEN I UNLOCK</button>
@@ -668,7 +685,15 @@ async function renderSettings() {
   $('orecs').onclick = () => { show('recs'); renderRecs(); };
   $('gbat').onclick = () => N('openBatterySettings').catch(() => {});
   $('gapp').onclick = () => N('openAppSettings').catch(() => {});
-  $('scam').onclick = async () => { await saveVals({ camFront: VALS.camFront === 'true' ? 'false' : 'true' }); renderSettings(); };
+  $('scam').onclick = async () => { await saveVals({ camMode: cyc(['front', 'back', 'both'], camMode()) }); renderSettings(); };
+  $('salm').onclick = async () => { await saveVals({ alertMode: cyc(['sms', 'auto', 'both', 'data'], VALS.alertMode || 'sms') }); if (VALS.alertMode !== 'sms' && !VALS.dataTopic) await saveVals({ dataTopic: newTopic() }); renderSettings(); };
+  $('ntop').onclick = async () => { if (confirm('Make a new code? Your contacts must subscribe to the new one.')) { await saveVals({ dataTopic: newTopic() }); renderSettings(); } };
+  $('shtop').onclick = async () => {
+    if (!VALS.dataTopic) await saveVals({ dataTopic: newTopic() });
+    const t = topicText();
+    try { if (navigator.share) { await navigator.share({ text: t }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(t); alert('Copied. Paste it into a message to your contact.'); } catch (e) { alert(t); }
+  };
   $('sneu').onclick = async () => { await saveVals({ neutral: cyc(['calc', 'blank', 'status'], VALS.neutral || 'calc') }); renderSettings(); };
   try {
     const rr = await N('listRecordings'); const n = JSON.parse(rr.json || '[]').length;

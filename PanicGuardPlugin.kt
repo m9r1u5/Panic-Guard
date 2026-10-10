@@ -334,7 +334,7 @@ class PanicGuardPlugin : Plugin() {
 
     @PluginMethod
     fun startPanic(call: PluginCall) {
-        if (stateOf("sms") != "granted") return call.reject("SMS permission is off")
+        if (Store.get(context, "alertMode", "sms") != "data" && stateOf("sms") != "granted") return call.reject("SMS permission is off")
         val t = call.getString("target") ?: "both"
         try {
             val i = Intent(context, PanicService::class.java)
@@ -405,7 +405,7 @@ class PanicGuardPlugin : Plugin() {
 
     @PluginMethod
     fun startTest(call: PluginCall) {
-        if (stateOf("sms") != "granted") return call.reject("SMS permission is off")
+        if (Store.get(context, "alertMode", "sms") != "data" && stateOf("sms") != "granted") return call.reject("SMS permission is off")
         val t = call.getString("target") ?: "both"
         try {
             val i = Intent(context, PanicService::class.java)
