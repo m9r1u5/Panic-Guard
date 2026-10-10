@@ -692,8 +692,8 @@ async function renderSettingsInner() {
   $('gapp').onclick = () => N('openAppSettings').catch(() => {});
   $('scam').onclick = async () => { await saveVals({ camMode: cyc(['front', 'back', 'both'], camMode()) }); renderSettings(); };
   $('salm').onclick = async () => { await saveVals({ alertMode: cyc(['sms', 'auto', 'both', 'data'], VALS.alertMode || 'sms') }); if (VALS.alertMode !== 'sms' && !VALS.dataTopic) await saveVals({ dataTopic: newTopic() }); renderSettings(); };
-  $('ntop').onclick = async () => { if (confirm('Make a new code? Your contacts must subscribe to the new one.')) { await saveVals({ dataTopic: newTopic() }); renderSettings(); } };
-  $('shtop').onclick = async () => {
+  if ($('ntop')) $('ntop').onclick = async () => { if (confirm('Make a new code? Your contacts must subscribe to the new one.')) { await saveVals({ dataTopic: newTopic() }); renderSettings(); } };
+  if ($('shtop')) $('shtop').onclick = async () => {
     if (!VALS.dataTopic) await saveVals({ dataTopic: newTopic() });
     const t = topicText();
     try { if (navigator.share) { await navigator.share({ text: t }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
