@@ -5,29 +5,46 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Panic Guard</title>
 <style>
-  :root { --bg:#000; --fg:#fff; --red:#d50000; --amber:#ffb300; --green:#00c853; --card:#1a1a1a; }
+  :root { --bg:#000; --fg:#fff; --amber:#ffb300; --green:#00c853; --red:#ff5252; --card:#1a1a1a; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
     font-family:system-ui,sans-serif; font-size:18px; }
-  #app { display:flex; flex-direction:column; height:100%;
-    padding-top:env(safe-area-inset-top); }
+  #app { display:flex; flex-direction:column; height:100%; padding-top:env(safe-area-inset-top); }
   main { flex:1; overflow-y:auto; padding:16px; }
-  h1 { margin:0 0 4px; font-size:28px; }
-  .sub { color:#bbb; margin-bottom:16px; }
+  h1 { margin:0 0 6px; font-size:28px; }
+  h2 { margin:0 0 8px; font-size:20px; }
+  p { line-height:1.4; }
+  .sub { color:#bbb; margin-bottom:12px; }
   .card { background:var(--card); border-radius:16px; padding:16px; margin-bottom:16px; }
-  .btn { display:block; width:100%; min-height:64px; border:3px solid var(--fg);
-    border-radius:16px; background:#000; color:var(--fg); font-size:22px; font-weight:700; margin-top:12px; }
+  .btn { display:block; width:100%; min-height:64px; border:3px solid var(--fg); border-radius:16px;
+    background:#000; color:var(--fg); font-size:21px; font-weight:700; margin-top:12px; }
   .btn.primary { background:var(--amber); color:#000; border-color:var(--amber); }
-  .btn:disabled { opacity:.4; }
-  nav { display:flex; gap:8px; padding:8px 8px calc(8px + env(safe-area-inset-bottom));
+  .btn.small { min-height:48px; font-size:17px; }
+  .btn:disabled { opacity:.35; }
+  nav { display:flex; gap:6px; padding:8px 8px calc(8px + env(safe-area-inset-bottom));
     background:#111; border-top:2px solid #444; }
-  nav button { flex:1; min-height:60px; border:2px solid #fff; border-radius:14px;
-    background:#000; color:#fff; font-size:18px; font-weight:700; }
+  nav button { flex:1; min-height:58px; border:2px solid #fff; border-radius:14px;
+    background:#000; color:#fff; font-size:14px; font-weight:700; }
   nav button.active { background:#fff; color:#000; }
   .bar { height:14px; background:#333; border-radius:8px; overflow:hidden; margin-top:12px; }
   .bar > div { height:100%; width:0; background:var(--green); }
-  .ok { color:var(--green); } .warn { color:var(--amber); } .bad { color:#ff5252; }
-  .hidden { display:none; }
+  .ok { color:var(--green); } .warn { color:var(--amber); } .bad { color:var(--red); }
+  .hidden { display:none !important; }
+  .full { position:fixed; inset:0; background:#000; z-index:50; overflow-y:auto;
+    padding:calc(16px + env(safe-area-inset-top)) 16px 16px; }
+  .dots { font-size:34px; letter-spacing:10px; text-align:center; min-height:50px; margin:6px 0; }
+  .pad { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .pad button { min-height:72px; font-size:28px; font-weight:700; border:2px solid #fff;
+    border-radius:16px; background:#111; color:#fff; }
+  .pad button.go { background:var(--amber); color:#000; border-color:var(--amber); }
+  textarea { width:100%; min-height:130px; font-size:18px; background:#111; color:#fff;
+    border:2px solid #fff; border-radius:12px; padding:12px; }
+  .row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0;
+    border-bottom:1px solid #333; }
+  .row:last-child { border-bottom:0; }
+  .row button { min-height:44px; padding:0 14px; border:2px solid #fff; border-radius:12px;
+    background:#000; color:#fff; font-size:16px; font-weight:700; }
+  .prog { color:#999; font-size:15px; margin-bottom:8px; }
 </style>
 </head>
 <body>
@@ -36,10 +53,10 @@
     <section id="home">
       <h1>Panic Guard</h1>
       <div class="sub" id="ver">Version …</div>
+      <div id="warn"></div>
+      <div class="card" id="summary"></div>
       <div class="card">
-        <b>Stage 1 build</b><br>
-        The app installs, shares and updates. The panic button, contacts, PIN and
-        recording arrive in the next stages.
+        <b>Coming next</b><br>The panic button (Stage 3) and discreet recording (Stage 4).
       </div>
     </section>
 
@@ -54,63 +71,353 @@
       <button class="btn" id="u-check">CHECK FOR UPDATE</button>
       <button class="btn primary hidden" id="u-install">DOWNLOAD &amp; INSTALL</button>
     </section>
+
+    <section id="settings" class="hidden"></section>
   </main>
 
   <nav>
     <button id="n-home" class="active">HOME</button>
+    <button id="n-settings">SETTINGS</button>
     <button id="n-share">SHARE</button>
     <button id="n-update">UPDATE</button>
   </nav>
 </div>
 
+<div id="wiz" class="full hidden"></div>
+<div id="lock" class="full hidden"></div>
+
 <script>
-// ---- Settings: change REPO if your GitHub repository has a different name ----
+// ---------------- constants ----------------
 const OWNER = 'm9r1u5';
 const REPO  = 'Panic-Guard';
 const RELEASES_PAGE = `https://github.com/${OWNER}/${REPO}/releases/latest`;
 const APK_URL = `https://github.com/${OWNER}/${REPO}/releases/latest/download/PanicGuard.apk`;
 const API_LATEST = `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`;
+const DEFAULT_MSG = 'EMERGENCY - I need help. This is an automatic alert from my Panic Guard app. Please call me or come to my location.';
 
 const $ = id => document.getElementById(id);
 const PG = window.Capacitor && Capacitor.registerPlugin ? Capacitor.registerPlugin('PanicGuard') : null;
 let installed = { versionName: '?', versionCode: 0 };
-let latest = null;
+let VALS = {};
 
+async function N(method, args) {
+  if (!PG) throw new Error('Open the installed Panic Guard app, not the website.');
+  return PG[method](args || {});
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function loadVals() { try { VALS = await N('getValues'); } catch (e) { VALS = {}; } }
+async function saveVals(o) { await N('setValues', { values: o }); await loadVals(); }
+
+// ---------------- PIN pad ----------------
+function pad(el, o) {
+  const min = o.min || 4, max = 8;
+  let v = '';
+  el.innerHTML = `<h1>${o.title}</h1><div class="sub">${o.sub || ''}</div>
+    <div class="dots" id="pdots"></div><div class="sub bad" id="perr" style="text-align:center;min-height:24px"></div>
+    <div class="pad">${[1,2,3,4,5,6,7,8,9,'⌫',0,'OK'].map(k =>
+      `<button data-k="${k}" class="${k==='OK'?'go':''}">${k}</button>`).join('')}</div>
+    <div id="pextra">${o.extra || ''}</div>`;
+  const dots = () => { $('pdots').textContent = v.length ? '●'.repeat(v.length) : '○'.repeat(min); };
+  dots();
+  let disabled = false;
+  el.querySelectorAll('.pad button').forEach(b => b.onclick = () => {
+    if (disabled) return;
+    const k = b.dataset.k;
+    $('perr').textContent = '';
+    if (k === '⌫') v = v.slice(0, -1);
+    else if (k === 'OK') {
+      if (v.length < min) { $('perr').textContent = 'Enter at least ' + min + ' digits'; return; }
+      const pin = v; v = ''; dots(); o.onSubmit(pin);
+    } else if (v.length < max) v += k;
+    dots();
+  });
+  return {
+    error(m) { $('perr').textContent = m; },
+    disable(d) { disabled = d; el.querySelectorAll('.pad button').forEach(b => b.disabled = d); },
+    clear() { v = ''; dots(); }
+  };
+}
+
+// ---------------- unlock overlay ----------------
+function askUnlock(reason) {
+  return new Promise(resolve => {
+    if (!VALS.hasPin) { resolve(true); return; }
+    const L = $('lock');
+    L.classList.remove('hidden');
+    let timer = null;
+    const done = ok => { clearInterval(timer); L.classList.add('hidden'); L.innerHTML = ''; resolve(ok); };
+    const bio = VALS.bioEnabled === 'true';
+    const extra = (bio ? '<button class="btn" id="lbio">FINGERPRINT / FACE</button>' : '') +
+                  '<button class="btn small" id="lcancel">CANCEL</button>';
+    const p = pad(L, { title: 'Unlock', sub: reason || '', extra, onSubmit: async pin => {
+      try {
+        const r = await N('verifyPin', { pin });
+        if (r.ok) return done(true);
+        if (r.lockedSeconds > 0) return lockout(r.lockedSeconds);
+        p.error('Wrong PIN');
+      } catch (e) { p.error(e.message); }
+    }});
+    function lockout(sec) {
+      p.disable(true);
+      clearInterval(timer);
+      const tick = () => { p.error('Too many tries. Wait ' + sec + 's'); if (sec-- <= 0) { clearInterval(timer); p.disable(false); p.error(''); } };
+      tick(); timer = setInterval(tick, 1000);
+    }
+    $('lcancel').onclick = () => done(false);
+    const tryBio = () => N('biometricAuth', { title: 'Unlock Panic Guard' }).then(() => done(true)).catch(() => {});
+    if (bio) { $('lbio').onclick = tryBio; tryBio(); }
+  });
+}
+
+// ---------------- permission info ----------------
+const PERMS = [
+  { a:'contacts', t:'Contacts', d:'Lets you choose your two emergency contacts from your phone book.' },
+  { a:'sms', t:'Send text messages', d:'Lets the app send your alert SMS directly, without opening a messaging app. Your normal SMS charges may apply.' },
+  { a:'location', t:'Precise location', d:'Puts your exact position in the alert message.' },
+  { a:'bgLocation', t:'Location "all the time"', d:'Keeps location updates working when the screen is off. On the next screen choose "Allow all the time".' },
+  { a:'camera', t:'Camera', d:'Used only to record video after you press panic.' },
+  { a:'microphone', t:'Microphone', d:'Used only to record sound after you press panic.' },
+  { a:'notifications', t:'Notifications', d:'Android requires a notification while recording. Panic Guard will keep it neutral and quiet. It cannot be fully hidden.' },
+  { a:'battery', t:'Battery optimization', d:'Stops Android from pausing the app in the background. On the next screen choose Allow.' }
+];
+async function permStates() { try { return await N('getPermStates'); } catch (e) { return null; } }
+
+// ---------------- setup wizard ----------------
+const STEPS = [{type:'welcome'}, ...PERMS.map(p => ({type:'perm', p})),
+  {type:'contacts'}, {type:'pin'}, {type:'bio'}, {type:'message'}, {type:'done'}];
+let wi = 0;
+function wizStart() { wi = 0; $('wiz').classList.remove('hidden'); wizRender(); }
+function wizNext() { wi++; wizRender(); }
+
+function wizRender() {
+  const s = STEPS[wi], w = $('wiz');
+  const prog = `<div class="prog">Setup ${wi + 1} of ${STEPS.length}</div>`;
+  if (s.type === 'welcome') {
+    w.innerHTML = prog + `<h1>Welcome</h1>
+      <p>Panic Guard sends an SMS with your location to two people you trust and records video and sound when you press the panic button. Everything stays on this phone.</p>
+      <p>Setup takes a few minutes: permissions, two contacts, a PIN, fingerprint or face unlock, and your message.</p>
+      <button class="btn primary" id="go">START</button>`;
+    $('go').onclick = wizNext;
+  }
+  else if (s.type === 'perm') {
+    const p = s.p;
+    w.innerHTML = prog + `<h1>${p.t}</h1><p>${p.d}</p><div id="pst" class="sub"></div>
+      <button class="btn primary" id="allow">ALLOW</button>
+      <button class="btn small" id="skip">SKIP FOR NOW</button>`;
+    let opened = false;
+    $('skip').onclick = wizNext;
+    $('allow').onclick = async () => {
+      try {
+        if (p.a === 'battery') {
+          if (!opened) { opened = true; await N('openBatterySettings'); $('allow').textContent = 'CONTINUE'; return; }
+          wizNext(); return;
+        }
+        const r = await N('requestPerm', { alias: p.a });
+        if (r.state === 'granted') return wizNext();
+        $('pst').className = 'sub warn';
+        $('pst').innerHTML = 'Not allowed yet. If no pop-up appeared, open app settings, tap Permissions, and allow it there.' +
+          '<button class="btn small" id="oas">OPEN APP SETTINGS</button>';
+        $('oas').onclick = () => N('openAppSettings');
+        $('allow').textContent = 'TRY AGAIN';
+      } catch (e) { $('pst').className = 'sub bad'; $('pst').textContent = e.message; }
+    };
+  }
+  else if (s.type === 'contacts') wizContacts(prog);
+  else if (s.type === 'pin') wizPin(prog);
+  else if (s.type === 'bio') wizBio(prog);
+  else if (s.type === 'message') {
+    w.innerHTML = prog + `<h1>Your alert message</h1>
+      <p>This text is sent first. A map link with your location is added automatically.</p>
+      <textarea id="msg">${esc(VALS.message || DEFAULT_MSG)}</textarea>
+      <button class="btn primary" id="save">SAVE &amp; FINISH</button>`;
+    $('save').onclick = async () => {
+      const m = $('msg').value.trim() || DEFAULT_MSG;
+      await saveVals({ message: m, setupDone: 'true' });
+      wizNext();
+    };
+  }
+  else if (s.type === 'done') {
+    w.innerHTML = `<h1 class="ok">Setup complete</h1>
+      <p>You can change contacts, PIN, fingerprint and message later in Settings (it asks for your PIN).</p>
+      <button class="btn primary" id="fin">GO TO HOME</button>`;
+    $('fin').onclick = () => { w.classList.add('hidden'); w.innerHTML = ''; renderHome(); show('home'); };
+  }
+}
+
+async function pickInto(n) {
+  const r = await N('pickContact');
+  if (!r.number) throw new Error('That contact has no number');
+  await saveVals(n === 1 ? { c1Name: r.name, c1Num: r.number } : { c2Name: r.name, c2Num: r.number });
+}
+function contactRows() {
+  return [1, 2].map(n => {
+    const name = VALS['c' + n + 'Name'], num = VALS['c' + n + 'Num'];
+    return `<div class="card"><h2>Contact ${n}</h2>
+      <div class="${num ? '' : 'sub'}">${num ? esc(name) + '<br>' + esc(num) : 'Not chosen'}</div>
+      <button class="btn small" data-pick="${n}">${num ? 'CHANGE' : 'CHOOSE FROM PHONE'}</button></div>`;
+  }).join('');
+}
+function wizContacts(prog) {
+  const w = $('wiz');
+  const draw = () => {
+    const ok = VALS.c1Num && VALS.c2Num;
+    w.innerHTML = prog + `<h1>Emergency contacts</h1><p>Choose two people from your phone book.</p>
+      ${contactRows()}<div id="cerr" class="sub bad"></div>
+      <button class="btn primary" id="next" ${ok ? '' : 'disabled'}>NEXT</button>`;
+    w.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
+      try { await pickInto(+b.dataset.pick); draw(); }
+      catch (e) { if (e.message !== 'cancelled') $('cerr').textContent = e.message; }
+    });
+    $('next').onclick = wizNext;
+  };
+  draw();
+}
+
+function newPinFlow(el, title, onDone, onCancel) {
+  let first = null;
+  const run = () => {
+    const p = pad(el, { title, sub: first ? 'Enter it again to confirm' : 'Choose 4 to 8 digits',
+      extra: onCancel ? '<button class="btn small" id="pcancel">CANCEL</button>' : '',
+      onSubmit: async pin => {
+        if (!first) { first = pin; run(); return; }
+        if (pin !== first) { first = null; run(); $('perr').textContent = 'PINs did not match. Start again.'; return; }
+        try { await N('setPin', { pin }); await loadVals(); onDone(); } catch (e) { first = null; run(); $('perr').textContent = e.message; }
+      }});
+    if (onCancel) $('pcancel').onclick = onCancel;
+  };
+  run();
+}
+function wizPin(prog) { newPinFlow($('wiz'), 'Set your PIN', wizNext, null); }
+
+async function wizBio(prog) {
+  const w = $('wiz');
+  let st = 'unavailable';
+  try { st = (await N('biometricStatus')).status; } catch (e) {}
+  let body;
+  if (st === 'available') body = `<p>Use your fingerprint or face to stop recording quickly. This uses the unlock method already set up on your phone. Panic Guard never stores your fingerprint or face.</p>
+      <button class="btn primary" id="en">ENABLE</button>`;
+  else if (st === 'none_enrolled') body = `<p>No fingerprint or face is set up on this phone yet.</p>
+      <button class="btn" id="enr">OPEN PHONE SETTINGS</button><button class="btn" id="chk">CHECK AGAIN</button>`;
+  else body = `<p>Strong biometric unlock is not available on this phone. Many Samsung phones count face unlock as weak, so only fingerprint is accepted. Your PIN will still work.</p>`;
+  w.innerHTML = prog + `<h1>Fingerprint / face</h1>${body}<div id="berr" class="sub bad"></div>
+    <button class="btn small" id="skipb">${st === 'available' ? 'SKIP' : 'NEXT'}</button>`;
+  $('skipb').onclick = wizNext;
+  if ($('en')) $('en').onclick = async () => {
+    try { await N('biometricAuth', { title: 'Confirm to enable' }); await saveVals({ bioEnabled: 'true' }); wizNext(); }
+    catch (e) { $('berr').textContent = 'Not enabled: ' + e.message; }
+  };
+  if ($('enr')) $('enr').onclick = () => N('openBiometricEnroll');
+  if ($('chk')) $('chk').onclick = () => wizBio(prog);
+}
+
+// ---------------- home ----------------
+async function renderHome() {
+  await loadVals();
+  const s = await permStates();
+  const names = { contacts:'Contacts', sms:'SMS', location:'Location', bgLocation:'Location all the time',
+    camera:'Camera', microphone:'Microphone', notifications:'Notifications', battery:'Battery' };
+  let w = '';
+  if (s) {
+    const miss = Object.keys(names).filter(k => s[k] !== 'granted').map(k => names[k]);
+    if (miss.length) w = `<div class="card" style="border:3px solid var(--amber)"><b class="warn">Missing permissions</b><br>${miss.join(', ')}<br>
+      <button class="btn small" id="fixp">FIX IN SETTINGS</button></div>`;
+  }
+  $('warn').innerHTML = w;
+  if ($('fixp')) $('fixp').onclick = () => openSettings();
+  $('summary').innerHTML = VALS.setupDone === 'true'
+    ? `<b>Ready</b><br>Contact 1: ${esc(VALS.c1Name || '-')}<br>Contact 2: ${esc(VALS.c2Name || '-')}<br>
+       Unlock: PIN${VALS.bioEnabled === 'true' ? ' + fingerprint/face' : ''}`
+    : `<b class="warn">Setup not finished</b><button class="btn primary" id="rs">FINISH SETUP</button>`;
+  if ($('rs')) $('rs').onclick = wizStart;
+}
+
+// ---------------- settings ----------------
+async function openSettings() {
+  if (!(await askUnlock('Unlock to open settings'))) return;
+  show('settings');
+  renderSettings();
+}
+async function renderSettings() {
+  await loadVals();
+  const s = await permStates() || {};
+  const labels = { contacts:'Contacts', sms:'SMS', location:'Location', bgLocation:'Location all the time',
+    camera:'Camera', microphone:'Microphone', notifications:'Notifications', battery:'Battery optimization' };
+  const S = $('settings');
+  S.innerHTML = `<h1>Settings</h1>
+    ${contactRows()}
+    <div class="card"><h2>Alert message</h2><textarea id="smsg">${esc(VALS.message || DEFAULT_MSG)}</textarea>
+      <button class="btn small" id="savemsg">SAVE MESSAGE</button><div id="mok" class="sub ok"></div></div>
+    <div class="card"><h2>Unlock</h2>
+      <button class="btn small" id="chpin">CHANGE PIN</button>
+      <button class="btn small" id="bio">${VALS.bioEnabled === 'true' ? 'DISABLE' : 'ENABLE'} FINGERPRINT / FACE</button>
+      <button class="btn small" id="both">${VALS.requireBoth === 'true' ? 'ON' : 'OFF'}: REQUIRE PIN AND BIOMETRIC</button>
+      <div class="sub" style="margin-top:8px">When "require both" is on, stopping a panic needs both.</div></div>
+    <div class="card"><h2>Permissions</h2>${Object.keys(labels).map(k => `<div class="row"><span>${labels[k]}
+      <b class="${s[k] === 'granted' ? 'ok' : 'warn'}">${s[k] === 'granted' ? '✓' : '✗'}</b></span>
+      ${s[k] === 'granted' ? '' : `<button data-perm="${k}">ALLOW</button>`}</div>`).join('')}
+      <button class="btn small" id="oas2">OPEN ANDROID APP SETTINGS</button></div>
+    <button class="btn small" id="rerun">RUN SETUP AGAIN</button>`;
+  S.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
+    try { await pickInto(+b.dataset.pick); renderSettings(); } catch (e) {}
+  });
+  $('savemsg').onclick = async () => {
+    await saveVals({ message: $('smsg').value.trim() || DEFAULT_MSG });
+    $('mok').textContent = 'Saved';
+  };
+  $('chpin').onclick = () => {
+    const w = $('wiz'); w.classList.remove('hidden');
+    newPinFlow(w, 'New PIN', () => { w.classList.add('hidden'); w.innerHTML = ''; renderSettings(); },
+      () => { w.classList.add('hidden'); w.innerHTML = ''; });
+  };
+  $('bio').onclick = async () => {
+    try {
+      if (VALS.bioEnabled === 'true') await saveVals({ bioEnabled: 'false' });
+      else { await N('biometricAuth', { title: 'Confirm to enable' }); await saveVals({ bioEnabled: 'true' }); }
+    } catch (e) { alert('Not changed: ' + e.message); }
+    renderSettings();
+  };
+  $('both').onclick = async () => {
+    if (VALS.requireBoth !== 'true' && VALS.bioEnabled !== 'true') { alert('Enable fingerprint / face first.'); return; }
+    await saveVals({ requireBoth: VALS.requireBoth === 'true' ? 'false' : 'true' });
+    renderSettings();
+  };
+  S.querySelectorAll('[data-perm]').forEach(b => b.onclick = async () => {
+    const a = b.dataset.perm;
+    try {
+      if (a === 'battery') await N('openBatterySettings');
+      else { const r = await N('requestPerm', { alias: a }); if (r.state !== 'granted') await N('openAppSettings'); }
+    } catch (e) {}
+    setTimeout(renderSettings, 800);
+  });
+  $('oas2').onclick = () => N('openAppSettings');
+  $('rerun').onclick = wizStart;
+}
+
+// ---------------- navigation ----------------
 function show(name) {
-  for (const s of ['home','update']) $(s).classList.toggle('hidden', s !== name);
+  for (const s of ['home','update','settings']) $(s).classList.toggle('hidden', s !== name);
   $('n-home').classList.toggle('active', name === 'home');
   $('n-update').classList.toggle('active', name === 'update');
+  $('n-settings').classList.toggle('active', name === 'settings');
 }
-
-async function loadInfo() {
-  try {
-    installed = await PG.getAppInfo();
-  } catch (e) { /* running outside the app */ }
-  $('ver').textContent = 'Version ' + installed.versionName;
-  $('u-inst').textContent = installed.versionName;
-}
-
-$('n-home').onclick = () => show('home');
-$('n-update').onclick = () => { show('update'); };
+$('n-home').onclick = () => { show('home'); renderHome(); };
+$('n-settings').onclick = openSettings;
+$('n-update').onclick = () => show('update');
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('home').classList.contains('hidden')) renderHome(); });
 
 $('n-share').onclick = async () => {
   try {
-    await PG.shareText({
-      title: 'Share Panic Guard',
-      text: 'Panic Guard (Android app). Download the latest version here: ' + RELEASES_PAGE
-    });
+    await N('shareText', { title: 'Share Panic Guard',
+      text: 'Panic Guard (Android app). Download the latest version here: ' + RELEASES_PAGE });
   } catch (e) { alert('Could not open the share sheet.'); }
 };
 
+// ---------------- update ----------------
 $('u-check').onclick = async () => {
   const msg = $('u-msg');
   $('u-install').classList.add('hidden');
   msg.className = 'sub'; msg.textContent = 'Checking…';
-  if (!navigator.onLine) {
-    msg.className = 'sub warn';
-    msg.textContent = 'You are offline. Updating needs an internet connection.';
-    return;
-  }
+  if (!navigator.onLine) { msg.className = 'sub warn'; msg.textContent = 'You are offline. Updating needs an internet connection.'; return; }
   try {
     const r = await fetch(API_LATEST, { headers: { Accept: 'application/vnd.github+json' } });
     if (r.status === 404) { msg.textContent = 'No release found yet.'; return; }
@@ -118,45 +425,39 @@ $('u-check').onclick = async () => {
     const j = await r.json();
     const m = /(\d+)\s*$/.exec(j.tag_name || '');
     const code = m ? parseInt(m[1], 10) : 0;
-    latest = { tag: j.tag_name, code };
     $('u-latest').textContent = (j.tag_name || '?').replace(/^v/, '');
     if (code > installed.versionCode) {
-      msg.className = 'sub warn';
-      msg.textContent = 'A newer version is available.';
+      msg.className = 'sub warn'; msg.textContent = 'A newer version is available.';
       $('u-install').classList.remove('hidden');
-    } else {
-      msg.className = 'sub ok';
-      msg.textContent = 'You have the latest version.';
-    }
-  } catch (e) {
-    msg.className = 'sub warn';
-    msg.textContent = 'Could not reach GitHub. Check your connection and try again.';
-  }
+    } else { msg.className = 'sub ok'; msg.textContent = 'You have the latest version.'; }
+  } catch (e) { msg.className = 'sub warn'; msg.textContent = 'Could not reach GitHub. Check your connection and try again.'; }
 };
-
 $('u-install').onclick = async () => {
   const msg = $('u-msg');
   try {
-    const { allowed } = await PG.canInstall();
+    const { allowed } = await N('canInstall');
     if (!allowed) {
       msg.className = 'sub warn';
       msg.textContent = 'Allow "Install unknown apps" for Panic Guard on the next screen, press back, then tap this button again.';
-      await PG.openInstallSettings();
-      return;
+      await N('openInstallSettings'); return;
     }
     msg.className = 'sub'; msg.textContent = 'Downloading…';
-    $('u-barwrap').classList.remove('hidden');
-    $('u-bar').style.width = '0%';
+    $('u-barwrap').classList.remove('hidden'); $('u-bar').style.width = '0%';
     await PG.addListener('downloadProgress', p => { $('u-bar').style.width = p.percent + '%'; });
-    await PG.downloadAndInstall({ url: APK_URL });
+    await N('downloadAndInstall', { url: APK_URL });
     msg.textContent = 'Opening installer…';
-  } catch (e) {
-    msg.className = 'sub bad';
-    msg.textContent = 'Update failed: ' + (e.message || e);
-  }
+  } catch (e) { msg.className = 'sub bad'; msg.textContent = 'Update failed: ' + (e.message || e); }
 };
 
-loadInfo();
+// ---------------- start ----------------
+(async function init() {
+  try { installed = await N('getAppInfo'); } catch (e) {}
+  $('ver').textContent = 'Version ' + installed.versionName;
+  $('u-inst').textContent = installed.versionName;
+  if (!PG) { $('summary').innerHTML = '<b class="warn">This is the website preview.</b><br>Install the app from the GitHub Release to use Panic Guard.'; return; }
+  await renderHome();
+  if (VALS.setupDone !== 'true') wizStart();
+})();
 </script>
 </body>
 </html>

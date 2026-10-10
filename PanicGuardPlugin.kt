@@ -1,25 +1,59 @@
 package com.m9r1u5.panicguard
 
+import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.ContactsContract
 import android.provider.Settings
+import androidx.activity.result.ActivityResult
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.fragment.app.FragmentActivity
 import com.getcapacitor.JSObject
+import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-@CapacitorPlugin(name = "PanicGuard")
+@CapacitorPlugin(
+    name = "PanicGuard",
+    permissions = [
+        Permission(strings = [Manifest.permission.READ_CONTACTS], alias = "contacts"),
+        Permission(strings = [Manifest.permission.SEND_SMS], alias = "sms"),
+        Permission(
+            strings = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION],
+            alias = "location"
+        ),
+        Permission(strings = [Manifest.permission.ACCESS_BACKGROUND_LOCATION], alias = "bgLocation"),
+        Permission(strings = [Manifest.permission.CAMERA], alias = "camera"),
+        Permission(strings = [Manifest.permission.RECORD_AUDIO], alias = "microphone"),
+        Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications")
+    ]
+)
 class PanicGuardPlugin : Plugin() {
+
+    private val aliases = listOf(
+        "contacts", "sms", "location", "bgLocation", "camera", "microphone", "notifications"
+    )
+
+    // ================= Stage 1: app info, share, update =================
 
     @PluginMethod
     fun getAppInfo(call: PluginCall) {
-        val pm = context.packageManager
-        val info = pm.getPackageInfo(context.packageName, 0)
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
         val ret = JSObject()
         ret.put("versionName", info.versionName ?: "")
         @Suppress("DEPRECATION")
@@ -68,7 +102,6 @@ class PanicGuardPlugin : Plugin() {
                 val dir = File(context.cacheDir, "update").apply { mkdirs() }
                 val apk = File(dir, "update.apk")
                 if (apk.exists()) apk.delete()
-
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.instanceFollowRedirects = true
                 conn.connectTimeout = 15000
@@ -101,9 +134,7 @@ class PanicGuardPlugin : Plugin() {
                         }
                     }
                 }
-                val uri = FileProvider.getUriForFile(
-                    context, context.packageName + ".fileprovider", apk
-                )
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", apk)
                 val install = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/vnd.android.package-archive")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -114,5 +145,185 @@ class PanicGuardPlugin : Plugin() {
                 call.reject(e.message ?: "Download failed")
             }
         }.start()
+    }
+
+    // ================= Stage 2: permissions =================
+
+    private fun stateOf(alias: String): String {
+        if (alias == "notifications" && Build.VERSION.SDK_INT < 33) return "granted"
+        if (alias == "bgLocation" && Build.VERSION.SDK_INT < 29) return "granted"
+        return getPermissionState(alias).toString()
+    }
+
+    private fun batteryOk(): Boolean {
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
+        return pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    @PluginMethod
+    fun getPermStates(call: PluginCall) {
+        val ret = JSObject()
+        for (a in aliases) ret.put(a, stateOf(a))
+        ret.put("battery", if (batteryOk()) "granted" else "denied")
+        call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun requestPerm(call: PluginCall) {
+        val alias = call.getString("alias") ?: return call.reject("No alias")
+        if (alias !in aliases) return call.reject("Unknown permission")
+        if (stateOf(alias) == "granted") {
+            val r = JSObject(); r.put("state", "granted"); call.resolve(r); return
+        }
+        requestPermissionForAlias(alias, call, "permResult")
+    }
+
+    @PermissionCallback
+    private fun permResult(call: PluginCall) {
+        val alias = call.getString("alias") ?: ""
+        val r = JSObject()
+        r.put("state", stateOf(alias))
+        call.resolve(r)
+    }
+
+    @PluginMethod
+    fun openBatterySettings(call: PluginCall) {
+        val i = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:" + context.packageName)
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(i)
+        } catch (e: Exception) {
+            context.startActivity(
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun openAppSettings(call: PluginCall) {
+        val i = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:" + context.packageName)
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+        call.resolve()
+    }
+
+    // ================= Stage 2: contacts =================
+
+    @PluginMethod
+    fun pickContact(call: PluginCall) {
+        val i = Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI)
+        startActivityForResult(call, i, "pickResult")
+    }
+
+    @ActivityCallback
+    private fun pickResult(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val uri = result.data?.data
+        if (result.resultCode != Activity.RESULT_OK || uri == null) {
+            call.reject("cancelled"); return
+        }
+        val cols = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        context.contentResolver.query(uri, cols, null, null, null)?.use { c ->
+            if (c.moveToFirst()) {
+                val r = JSObject()
+                r.put("name", c.getString(0) ?: "")
+                r.put("number", (c.getString(1) ?: "").replace(Regex("[^+0-9]"), ""))
+                call.resolve(r)
+                return
+            }
+        }
+        call.reject("No number found")
+    }
+
+    // ================= Stage 2: encrypted settings + PIN =================
+
+    @PluginMethod
+    fun getValues(call: PluginCall) {
+        val r = JSObject()
+        for (k in Store.KEYS) r.put(k, Store.get(context, k))
+        r.put("hasPin", Store.hasPin(context))
+        call.resolve(r)
+    }
+
+    @PluginMethod
+    fun setValues(call: PluginCall) {
+        val obj = call.getObject("values") ?: return call.reject("No values")
+        val it = obj.keys()
+        while (it.hasNext()) {
+            val k = it.next()
+            if (k in Store.KEYS) Store.set(context, k, obj.optString(k, ""))
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setPin(call: PluginCall) {
+        val pin = call.getString("pin") ?: return call.reject("No PIN")
+        if (Store.setPin(context, pin)) call.resolve() else call.reject("PIN must be 4-8 digits")
+    }
+
+    @PluginMethod
+    fun verifyPin(call: PluginCall) {
+        val pin = call.getString("pin") ?: ""
+        val v = Store.verifyPin(context, pin)
+        val r = JSObject()
+        r.put("ok", v.ok)
+        r.put("lockedSeconds", v.lockedSeconds)
+        call.resolve(r)
+    }
+
+    // ================= Stage 2: biometrics =================
+
+    @PluginMethod
+    fun biometricStatus(call: PluginCall) {
+        val s = when (BiometricManager.from(context).canAuthenticate(BIOMETRIC_STRONG)) {
+            BiometricManager.BIOMETRIC_SUCCESS -> "available"
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "none_enrolled"
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "no_hardware"
+            else -> "unavailable"
+        }
+        val r = JSObject(); r.put("status", s); call.resolve(r)
+    }
+
+    @PluginMethod
+    fun openBiometricEnroll(call: PluginCall) {
+        val i = if (Build.VERSION.SDK_INT >= 30) {
+            Intent(Settings.ACTION_BIOMETRIC_ENROLL).putExtra(
+                Settings.EXTRA_BIOMETRIC_AUTHENTICATORS_ALLOWED, BIOMETRIC_STRONG
+            )
+        } else Intent(Settings.ACTION_SECURITY_SETTINGS)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun biometricAuth(call: PluginCall) {
+        val act = activity as? FragmentActivity ?: return call.reject("No activity")
+        act.runOnUiThread {
+            val cb = object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    val r = JSObject(); r.put("success", true); call.resolve(r)
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    call.reject(errString.toString(), errorCode.toString())
+                }
+            }
+            val info = BiometricPrompt.PromptInfo.Builder()
+                .setTitle(call.getString("title") ?: "Unlock Panic Guard")
+                .setNegativeButtonText("Use PIN")
+                .setAllowedAuthenticators(BIOMETRIC_STRONG)
+                .build()
+            BiometricPrompt(act, ContextCompat.getMainExecutor(act), cb).authenticate(info)
+        }
     }
 }
