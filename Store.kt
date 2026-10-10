@@ -14,7 +14,8 @@ import javax.crypto.spec.PBEKeySpec
 object Store {
     val KEYS = listOf(
         "setupDone", "c1Name", "c1Num", "c2Name", "c2Num",
-        "message", "bioEnabled", "requireBoth"
+        "message", "bioEnabled", "requireBoth",
+        "defaultTarget", "intervalMin", "sendSafe", "volTriple"
     )
 
     @Volatile private var cached: SharedPreferences? = null

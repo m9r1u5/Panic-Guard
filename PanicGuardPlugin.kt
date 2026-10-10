@@ -6,6 +6,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.ContactsContract
 import android.provider.Settings
 import androidx.activity.result.ActivityResult
@@ -325,5 +328,62 @@ class PanicGuardPlugin : Plugin() {
                 .build()
             BiometricPrompt(act, ContextCompat.getMainExecutor(act), cb).authenticate(info)
         }
+    }
+
+    // ================= Stage 3: panic =================
+
+    @PluginMethod
+    fun startPanic(call: PluginCall) {
+        if (stateOf("sms") != "granted") return call.reject("SMS permission is off")
+        val t = call.getString("target") ?: "both"
+        try {
+            val i = Intent(context, PanicService::class.java)
+                .setAction(PanicService.ACTION_START).putExtra("target", t)
+            ContextCompat.startForegroundService(context, i)
+            call.resolve()
+        } catch (e: Exception) {
+            call.reject(e.message ?: "Could not start")
+        }
+    }
+
+    @PluginMethod
+    fun stopPanic(call: PluginCall) {
+        try {
+            val i = Intent(context, PanicService::class.java)
+                .setAction(PanicService.ACTION_STOP).putExtra("safe", call.getBoolean("safe") ?: false)
+            context.startService(i)
+        } catch (e: Exception) {
+            Store.set(context, "pActive", "false")
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun getPanicState(call: PluginCall) {
+        val r = JSObject(); r.put("json", Store.get(context, "pState", "{}")); call.resolve(r)
+    }
+
+    @PluginMethod
+    fun getLog(call: PluginCall) {
+        val r = JSObject(); r.put("json", Store.get(context, "pLog", "[]")); call.resolve(r)
+    }
+
+    @PluginMethod
+    fun clearLog(call: PluginCall) {
+        Store.set(context, "pLog", "[]"); call.resolve()
+    }
+
+    @PluginMethod
+    fun vibrate(call: PluginCall) {
+        val ms = (call.getInt("ms") ?: 200).toLong()
+        try {
+            @Suppress("DEPRECATION")
+            val v: Vibrator = if (Build.VERSION.SDK_INT >= 31)
+                (context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            else context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= 26) v.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+            else v.vibrate(ms)
+        } catch (e: Exception) { }
+        call.resolve()
     }
 }

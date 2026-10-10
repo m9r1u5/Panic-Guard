@@ -43,17 +43,43 @@ def app(s):
     return s
 edit("android/app/build.gradle", app)
 
-# Manifest: permissions needed for Stage 1
-def manifest(s):
-    perms = (
-        '    <uses-permission android:name="android.permission.INTERNET" />\n'
-        '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n'
-        '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n'
+# App build.gradle: dependencies for secure storage + biometrics
+def deps(s):
+    add = (
+        '\n    implementation "androidx.security:security-crypto:1.1.0-alpha06"'
+        '\n    implementation "androidx.biometric:biometric:1.1.0"'
     )
-    for line in perms.splitlines():
-        name = re.search(r'name="([^"]+)"', line).group(1)
-        if name in s:
-            perms = perms.replace(line + "\n", "")
-    return s.replace("</manifest>", perms + "</manifest>", 1)
+    return s.replace("dependencies {", "dependencies {" + add, 1)
+edit("android/app/build.gradle", deps)
+
+# Manifest: permissions and optional hardware
+PERMS = [
+    "INTERNET", "ACCESS_NETWORK_STATE", "REQUEST_INSTALL_PACKAGES",
+    "READ_CONTACTS", "SEND_SMS", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION",
+    "ACCESS_BACKGROUND_LOCATION", "CAMERA", "RECORD_AUDIO", "POST_NOTIFICATIONS",
+    "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "USE_BIOMETRIC", "VIBRATE",
+    "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK",
+]
+FEATURES = ["android.hardware.telephony", "android.hardware.camera", "android.hardware.location.gps"]
+
+def manifest(s):
+    add = ""
+    for p in PERMS:
+        if 'android.permission.' + p + '"' not in s:
+            add += '    <uses-permission android:name="android.permission.' + p + '" />\n'
+    for f in FEATURES:
+        if f not in s:
+            add += '    <uses-feature android:name="' + f + '" android:required="false" />\n'
+    comps = ""
+    if "PanicService" not in s:
+        comps = (
+            '        <service android:name=".PanicService" android:exported="false" '
+            'android:foregroundServiceType="location" />\n'
+            '        <receiver android:name=".BootReceiver" android:exported="true">\n'
+            '            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>\n'
+            '        </receiver>\n'
+        )
+    s = s.replace("</application>", comps + "    </application>", 1)
+    return s.replace("</manifest>", add + "</manifest>", 1)
 edit("android/app/src/main/AndroidManifest.xml", manifest)
 print("Patched OK")

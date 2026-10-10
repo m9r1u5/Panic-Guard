@@ -23,8 +23,8 @@
   .btn:disabled { opacity:.35; }
   nav { display:flex; gap:6px; padding:8px 8px calc(8px + env(safe-area-inset-bottom));
     background:#111; border-top:2px solid #444; }
-  nav button { flex:1; min-height:58px; border:2px solid #fff; border-radius:14px;
-    background:#000; color:#fff; font-size:14px; font-weight:700; }
+  nav button { flex:1; min-width:0; padding:0; min-height:58px; border:2px solid #fff; border-radius:14px;
+    background:#000; color:#fff; font-size:12px; font-weight:700; }
   nav button.active { background:#fff; color:#000; }
   .bar { height:14px; background:#333; border-radius:8px; overflow:hidden; margin-top:12px; }
   .bar > div { height:100%; width:0; background:var(--green); }
@@ -45,6 +45,16 @@
   .row button { min-height:44px; padding:0 14px; border:2px solid #fff; border-radius:12px;
     background:#000; color:#fff; font-size:16px; font-weight:700; }
   .prog { color:#999; font-size:15px; margin-bottom:8px; }
+  .btn.big { min-height:84px; font-size:26px; }
+  #pbtn { position:relative; width:min(78vw,300px); aspect-ratio:1; border-radius:50%; background:#d50000;
+    border:6px solid #fff; margin:8px auto 18px; display:flex; align-items:center; justify-content:center;
+    user-select:none; -webkit-user-select:none; touch-action:none; }
+  #pring { position:absolute; inset:0; border-radius:50%;
+    -webkit-mask:radial-gradient(circle, transparent 66%, #000 67%); mask:radial-gradient(circle, transparent 66%, #000 67%); }
+  #plabel { position:relative; font-size:44px; font-weight:900; text-align:center; pointer-events:none; }
+  #plabel small { display:block; font-size:16px; font-weight:700; margin-top:6px; }
+  #choose { z-index:45; } #panic { z-index:40; }
+  .msgline { padding:8px 0; border-bottom:1px solid #333; }
 </style>
 </head>
 <body>
@@ -55,9 +65,7 @@
       <div class="sub" id="ver">Version …</div>
       <div id="warn"></div>
       <div class="card" id="summary"></div>
-      <div class="card">
-        <b>Coming next</b><br>The panic button (Stage 3) and discreet recording (Stage 4).
-      </div>
+      <div id="panicbox"></div>
     </section>
 
     <section id="update" class="hidden">
@@ -78,12 +86,15 @@
   <nav>
     <button id="n-home" class="active">HOME</button>
     <button id="n-settings">SETTINGS</button>
+    <button id="n-install">INSTALL</button>
     <button id="n-share">SHARE</button>
     <button id="n-update">UPDATE</button>
   </nav>
 </div>
 
 <div id="wiz" class="full hidden"></div>
+<div id="choose" class="full hidden"></div>
+<div id="panic" class="full hidden"></div>
 <div id="lock" class="full hidden"></div>
 
 <script>
@@ -139,14 +150,15 @@ function pad(el, o) {
 }
 
 // ---------------- unlock overlay ----------------
-function askUnlock(reason) {
+function askUnlock(reason, opts) {
+  opts = opts || {};
   return new Promise(resolve => {
     if (!VALS.hasPin) { resolve(true); return; }
     const L = $('lock');
     L.classList.remove('hidden');
     let timer = null;
     const done = ok => { clearInterval(timer); L.classList.add('hidden'); L.innerHTML = ''; resolve(ok); };
-    const bio = VALS.bioEnabled === 'true';
+    const bio = VALS.bioEnabled === 'true' && !opts.noBio;
     const extra = (bio ? '<button class="btn" id="lbio">FINGERPRINT / FACE</button>' : '') +
                   '<button class="btn small" id="lcancel">CANCEL</button>';
     const p = pad(L, { title: 'Unlock', sub: reason || '', extra, onSubmit: async pin => {
@@ -329,7 +341,115 @@ async function renderHome() {
        Unlock: PIN${VALS.bioEnabled === 'true' ? ' + fingerprint/face' : ''}`
     : `<b class="warn">Setup not finished</b><button class="btn primary" id="rs">FINISH SETUP</button>`;
   if ($('rs')) $('rs').onclick = wizStart;
+  if (VALS.setupDone === 'true') { $('panicbox').innerHTML = panicButtonHTML(); bindPanicButton(); }
+  else $('panicbox').innerHTML = '';
 }
+
+// ---------------- panic button ----------------
+function panicButtonHTML() {
+  return '<div id="pbtn" role="button"><div id="pring"></div><div id="plabel">PANIC<small>HOLD 2 SECONDS</small></div></div>';
+}
+function bindPanicButton() {
+  const b = $('pbtn'); let t0 = 0, raf = 0, on = false;
+  const ring = p => { $('pring').style.background = p > 0 ? `conic-gradient(#fff ${p * 360}deg, transparent 0)` : 'transparent'; };
+  const frame = () => {
+    if (!on) return;
+    const p = Math.min(1, (performance.now() - t0) / 2000);
+    ring(p);
+    if (p >= 1) { on = false; ring(0); N('vibrate', { ms: 350 }).catch(() => {}); startPanicFlow(); }
+    else raf = requestAnimationFrame(frame);
+  };
+  b.addEventListener('pointerdown', e => { e.preventDefault(); if (on) return; on = true; t0 = performance.now(); raf = requestAnimationFrame(frame); });
+  const cancel = () => { on = false; cancelAnimationFrame(raf); ring(0); };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => b.addEventListener(ev, cancel));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+}
+const TARGET_LABEL = { '': 'ASK EACH TIME', '1': 'CONTACT 1', '2': 'CONTACT 2', both: 'BOTH' };
+function homeError(html) {
+  $('warn').innerHTML = `<div class="card" style="border:3px solid var(--red)"><b class="bad">${html}</b>
+    <button class="btn small" id="fixp2">OPEN SETTINGS</button></div>` + $('warn').innerHTML;
+  $('fixp2').onclick = () => openSettings();
+  window.scrollTo(0, 0); document.querySelector('main').scrollTop = 0;
+}
+async function startPanicFlow() {
+  if (!$('panic').classList.contains('hidden') || !$('choose').classList.contains('hidden')) return;
+  await loadVals();
+  if (VALS.setupDone !== 'true') { wizStart(); return; }
+  const s = await permStates();
+  if (!s || s.sms !== 'granted') { homeError('Cannot send: SMS permission is off.'); return; }
+  if (s.location !== 'granted') { homeError('Cannot start: Location permission is off.'); return; }
+  const d = VALS.defaultTarget;
+  if (d === '1' || d === '2' || d === 'both') return doPanic(d);
+  chooseTarget();
+}
+function chooseTarget() {
+  const L = $('choose'); let remember = false;
+  const draw = () => {
+    L.classList.remove('hidden');
+    L.innerHTML = `<h1>Alert who?</h1>
+      <button class="btn big" data-t="1">${esc(VALS.c1Name || 'Contact 1')}</button>
+      <button class="btn big" data-t="2">${esc(VALS.c2Name || 'Contact 2')}</button>
+      <button class="btn big primary" data-t="both">BOTH</button>
+      <button class="btn small" id="rem">${remember ? '✓' : '○'} REMEMBER MY CHOICE</button>
+      <button class="btn small" id="cc">CANCEL</button>`;
+    L.querySelectorAll('[data-t]').forEach(b => b.onclick = async () => {
+      const t = b.dataset.t;
+      L.classList.add('hidden'); L.innerHTML = '';
+      if (remember) { try { await saveVals({ defaultTarget: t }); } catch (e) {} }
+      doPanic(t);
+    });
+    $('rem').onclick = () => { remember = !remember; draw(); };
+    $('cc').onclick = () => { L.classList.add('hidden'); L.innerHTML = ''; };
+  };
+  draw();
+}
+let panicGrace = 0, panicTimer = null;
+async function doPanic(t) {
+  try { await N('startPanic', { target: t }); }
+  catch (e) { homeError('Panic could not start: ' + esc(e.message || e)); return; }
+  panicGrace = Date.now() + 6000;
+  showPanic();
+}
+function showPanic() {
+  $('panic').classList.remove('hidden');
+  clearInterval(panicTimer);
+  pollPanic(); panicTimer = setInterval(pollPanic, 1500);
+}
+function hidePanic() { clearInterval(panicTimer); $('panic').classList.add('hidden'); $('panic').innerHTML = ''; }
+const ST = { sent: ['SENT ✓', 'ok'], failed: ['FAILED - retrying', 'bad'], sending: ['Sending…', 'warn'],
+  queued: ['Queued', 'warn'], superseded: ['Replaced by newer', 'sub'], 'gave up': ['Gave up', 'bad'] };
+async function pollPanic() {
+  let st = {};
+  try { st = JSON.parse((await N('getPanicState')).json || '{}'); } catch (e) { return; }
+  if (!st.active) { if (Date.now() > panicGrace) hidePanic(); return; }
+  const mins = Math.floor((Date.now() - st.startedAt) / 60000);
+  let loc = 'Searching for GPS…';
+  if (st.loc) loc = (st.loc.fresh ? 'Live location' : 'Last known location (' + Math.round(st.loc.ageSec / 60) + ' min old)') +
+    '<br>' + st.loc.lat.toFixed(5) + ', ' + st.loc.lon.toFixed(5);
+  const lines = (st.msgs || []).slice().reverse().map(m => {
+    const [t, c] = ST[m.status] || [m.status, ''];
+    return `<div class="msgline"><b>${esc(m.name)}</b> (${m.kind}) <span class="${c}">${t}</span>${m.attempts > 1 ? ' try ' + m.attempts : ''}</div>`;
+  }).join('') || '<div class="sub">Preparing first message…</div>';
+  $('panic').innerHTML = `<h1 class="bad">PANIC ACTIVE</h1><div class="sub">Running for ${mins} min</div>
+    <div class="card">${loc}</div><div class="card"><h2>Messages</h2>${lines}</div>
+    <button class="btn big primary" id="stopp">UNLOCK TO STOP</button>
+    <div class="sub" style="margin-top:10px">Alerts keep sending if you close this screen.</div>`;
+  $('stopp').onclick = unlockToStop;
+}
+async function unlockToStop() {
+  await loadVals();
+  const both = VALS.requireBoth === 'true' && VALS.bioEnabled === 'true';
+  if (!(await askUnlock('Unlock to stop the alert', { noBio: both }))) return;
+  if (both) {
+    try { await N('biometricAuth', { title: 'Confirm fingerprint / face' }); }
+    catch (e) { alert('Fingerprint / face was not confirmed.'); return; }
+  }
+  await N('stopPanic', { safe: VALS.sendSafe === 'true' });
+  panicGrace = 0; hidePanic(); renderHome();
+}
+window.addEventListener('volumeTriple', () => {
+  if (VALS.volTriple === 'true' && VALS.setupDone === 'true') startPanicFlow();
+});
 
 // ---------------- settings ----------------
 async function openSettings() {
@@ -352,6 +472,14 @@ async function renderSettings() {
       <button class="btn small" id="bio">${VALS.bioEnabled === 'true' ? 'DISABLE' : 'ENABLE'} FINGERPRINT / FACE</button>
       <button class="btn small" id="both">${VALS.requireBoth === 'true' ? 'ON' : 'OFF'}: REQUIRE PIN AND BIOMETRIC</button>
       <div class="sub" style="margin-top:8px">When "require both" is on, stopping a panic needs both.</div></div>
+    <div class="card"><h2>Panic</h2>
+      <button class="btn small" id="stt">WHO TO ALERT: ${TARGET_LABEL[VALS.defaultTarget || '']}</button>
+      <button class="btn small" id="sint">LOCATION UPDATE EVERY ${VALS.intervalMin || 2} MIN</button>
+      <button class="btn small" id="ssafe">${VALS.sendSafe === 'true' ? 'ON' : 'OFF'}: SEND "I'M SAFE" SMS WHEN I UNLOCK</button>
+      <button class="btn small" id="svol">${VALS.volTriple === 'true' ? 'ON' : 'OFF'}: TRIPLE VOLUME PRESS (APP OPEN ONLY)</button>
+      <div class="sub" style="margin-top:8px">Updates are only sent if you have moved.</div></div>
+    <div class="card"><h2>Panic log</h2><div id="logbox" class="sub">Loading…</div>
+      <button class="btn small" id="clog">CLEAR LOG</button></div>
     <div class="card"><h2>Permissions</h2>${Object.keys(labels).map(k => `<div class="row"><span>${labels[k]}
       <b class="${s[k] === 'granted' ? 'ok' : 'warn'}">${s[k] === 'granted' ? '✓' : '✗'}</b></span>
       ${s[k] === 'granted' ? '' : `<button data-perm="${k}">ALLOW</button>`}</div>`).join('')}
@@ -390,6 +518,16 @@ async function renderSettings() {
     setTimeout(renderSettings, 800);
   });
   $('oas2').onclick = () => N('openAppSettings');
+  const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
+  $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', '1', '2', 'both'], VALS.defaultTarget || '') }); renderSettings(); };
+  $('sint').onclick = async () => { await saveVals({ intervalMin: String(cyc([1, 2, 5, 10], +(VALS.intervalMin || 2))) }); renderSettings(); };
+  $('ssafe').onclick = async () => { await saveVals({ sendSafe: VALS.sendSafe === 'true' ? 'false' : 'true' }); renderSettings(); };
+  $('svol').onclick = async () => { await saveVals({ volTriple: VALS.volTriple === 'true' ? 'false' : 'true' }); renderSettings(); };
+  $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };
+  try {
+    const log = JSON.parse((await N('getLog')).json || '[]').slice(-15).reverse();
+    $('logbox').innerHTML = log.length ? log.map(e => `<div class="msgline">${new Date(e.t).toLocaleString()}<br>${esc(e.m)}</div>`).join('') : 'No events yet.';
+  } catch (e) { $('logbox').textContent = 'Not available.'; }
   $('rerun').onclick = wizStart;
 }
 
@@ -432,8 +570,9 @@ $('u-check').onclick = async () => {
     } else { msg.className = 'sub ok'; msg.textContent = 'You have the latest version.'; }
   } catch (e) { msg.className = 'sub warn'; msg.textContent = 'Could not reach GitHub. Check your connection and try again.'; }
 };
-$('u-install').onclick = async () => {
+async function installLatest() {
   const msg = $('u-msg');
+  if (!navigator.onLine) { msg.className = 'sub warn'; msg.textContent = 'You are offline. Installing needs an internet connection.'; return; }
   try {
     const { allowed } = await N('canInstall');
     if (!allowed) {
@@ -446,8 +585,10 @@ $('u-install').onclick = async () => {
     await PG.addListener('downloadProgress', p => { $('u-bar').style.width = p.percent + '%'; });
     await N('downloadAndInstall', { url: APK_URL });
     msg.textContent = 'Opening installer…';
-  } catch (e) { msg.className = 'sub bad'; msg.textContent = 'Update failed: ' + (e.message || e); }
-};
+  } catch (e) { msg.className = 'sub bad'; msg.textContent = 'Install failed: ' + (e.message || e); }
+}
+$('u-install').onclick = installLatest;
+$('n-install').onclick = () => { show('update'); installLatest(); };
 
 // ---------------- start ----------------
 (async function init() {
@@ -456,6 +597,7 @@ $('u-install').onclick = async () => {
   $('u-inst').textContent = installed.versionName;
   if (!PG) { $('summary').innerHTML = '<b class="warn">This is the website preview.</b><br>Install the app from the GitHub Release to use Panic Guard.'; return; }
   await renderHome();
+  try { const st = JSON.parse((await N('getPanicState')).json || '{}'); if (st.active) showPanic(); } catch (e) {}
   if (VALS.setupDone !== 'true') wizStart();
 })();
 </script>
