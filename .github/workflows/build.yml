@@ -49,7 +49,8 @@ jobs:
             echo "$KS_B64" | base64 -d > ~/.android/debug.keystore
           else
             cp debug.keystore ~/.android/debug.keystore
-          ficp ~/.android/debug.keystore android/app/debug.keystore
+          fi
+          cp ~/.android/debug.keystore android/app/debug.keystore
 
       - name: Build debug APK
         working-directory: android
