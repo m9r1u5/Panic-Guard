@@ -106,6 +106,7 @@
 
 <div id="wiz" class="full hidden"></div>
 <div id="choose" class="full hidden"></div>
+<div id="legal" class="full hidden" style="z-index:60"></div>
 <div id="panic" class="full hidden"></div>
 <div id="lock" class="full hidden"></div>
 
@@ -230,9 +231,12 @@ function wizRender() {
   }
   else if (s.type === 'perm') {
     const p = s.p;
+    if (VALS.recording === 'off' && (p.a === 'camera' || p.a === 'microphone')) return wizNext();
     w.innerHTML = prog + `<h1>${p.t}</h1><p>${p.d}</p><div id="pst" class="sub"></div>
       <button class="btn primary" id="allow">ALLOW</button>
-      <button class="btn small" id="skip">SKIP FOR NOW</button>`;
+      <button class="btn small" id="skip">SKIP FOR NOW</button>
+      ${p.a === 'camera' ? '<button class="btn small" id="recoff">I DO NOT WANT RECORDING</button>' : ''}`;
+    if ($('recoff')) $('recoff').onclick = async () => { await saveVals({ recording: 'off' }); wizNext(); };
     let opened = false;
     $('skip').onclick = wizNext;
     $('allow').onclick = async () => {
@@ -358,6 +362,46 @@ async function wizBio(prog) {
   if ($('chk')) $('chk').onclick = () => wizBio(prog);
 }
 
+
+// ---------------- privacy policy and disclaimer ----------------
+const LEGAL_HTML = `
+<div class="card"><h2>Important: please read</h2>
+<p>Panic Guard is a <b>personal safety aid. It is not an emergency service</b>, and it does not contact the police, an ambulance or any security company. In an emergency, call your local emergency number as well.</p>
+<p>The app depends on your phone, battery, mobile signal or internet, location accuracy and Android settings. <b>Alerts can be delayed or fail to arrive</b>, and your location may be missing or inaccurate. Recording may fail or be stopped by the phone. Nobody can guarantee that any message, location or recording will be sent, received or saved.</p>
+<p>Your contacts only see an alert if they have a working phone and signal and, for internet alerts, have set up the ntfy app. Please test the app with your contacts regularly using Test Mode.</p>
+<p>Camera and microphone use, and sharing recordings, may be restricted by law where you are. You are responsible for using these features lawfully.</p>
+<p>To the extent the law allows, the developer is not liable for any loss, injury or damage arising from use of, or inability to use, this app. Nothing here limits any rights you have that cannot be limited by law.</p></div>
+<div class="card"><h2>Privacy policy</h2>
+<p><b>1. What this app does.</b> When you hold the panic button, Panic Guard sends your chosen emergency contacts a message with your location and, if recording is on, records video and audio on your phone.</p>
+<p><b>2. No accounts, no developer servers.</b> You do not create an account. The developer does not run a server that receives your data, and the app has no advertising or analytics. Your settings, contacts, PIN and recordings are stored only on your phone.</p>
+<p><b>3. Information the app uses.</b><br>
+Emergency contacts: names and numbers you enter, stored on your phone and used only to send your alerts.<br>
+Location: used only while an alert is active, for a map link in your message and for location updates if you move.<br>
+Camera and microphone: used only during a panic or a test, and only if recording is turned on in Settings. Recordings stay on your phone unless you export or share them.<br>
+PIN and fingerprint or face: your PIN is stored on your phone. Fingerprint and face checks are done by Android; the app never receives your biometric data.</p>
+<p><b>4. Where information is sent.</b> Information leaves your phone only when you start a panic alert, run a test, or stop an alert and have chosen to send an "I'm safe" message:<br>
+By text message (SMS): the message, with a map link, is sent through your phone's SMS service to your contacts. Your mobile network carries it and your network charges apply.<br>
+Over the internet (if you turn this on): the message is sent over mobile data or wifi to ntfy.sh, a third-party notification service, under your private alert code. Your contacts receive it by subscribing to that code in the ntfy app. ntfy handles it under its own privacy policy. Anyone who knows your alert code could read your alerts, so keep it private and use "Make a new code" if it is shared by mistake.<br>
+Update check: if you use the Update button, the app contacts GitHub to see whether a newer version exists. Nothing is sent to the developer.</p>
+<p><b>5. Your control.</b> You choose your contacts, alert method and message and can change them in Settings. You can turn recording off in Settings, and delete recordings inside the app. Uninstalling the app removes all data it stored on your phone. You can turn off any permission in Android settings, but the matching feature will then not work.</p>
+<p><b>6. Other people.</b> Please make sure your emergency contacts agree to be listed. Recordings may capture other people. You are responsible for using recording lawfully where you are.</p>
+<p><b>7. Children.</b> The app is not designed for children.</p>
+<p><b>8. Security.</b> Data stays on your phone, protected by your phone's security and the app PIN. No method is perfectly secure. Keep your phone locked and your PIN private.</p>
+<p><b>9. Changes.</b> If this policy changes, the new version will appear in this app after an update.</p>
+<p><b>10. Questions.</b> Contact the person who gave you this app. If you live in South Africa, you also have rights under POPIA, including to complain to the Information Regulator.</p></div>`;
+function showLegal(gate) {
+  const L = $('legal'); L.classList.remove('hidden');
+  L.innerHTML = `<h1>Privacy and disclaimer</h1>${LEGAL_HTML}
+    <button class="btn big primary" id="legok">${gate ? 'I UNDERSTAND AND ACCEPT' : 'CLOSE'}</button>`;
+  L.scrollTop = 0;
+  return new Promise(res => {
+    $('legok').onclick = async () => {
+      if (gate) { try { await saveVals({ legalOk: 'true' }); } catch (e) {} }
+      L.classList.add('hidden'); L.innerHTML = ''; res();
+    };
+  });
+}
+
 // ---------------- home ----------------
 async function renderHome() {
   await loadVals();
@@ -366,7 +410,7 @@ async function renderHome() {
     camera:'Camera', microphone:'Microphone', notifications:'Notifications', battery:'Battery' };
   let w = '';
   if (s) {
-    const miss = Object.keys(names).filter(k => s[k] !== 'granted').map(k => names[k]);
+    const miss = Object.keys(names).filter(k => !(VALS.recording === 'off' && (k === 'camera' || k === 'microphone'))).filter(k => s[k] !== 'granted').map(k => names[k]);
     if (miss.length) w = `<div class="card" style="border:3px solid var(--amber)"><b class="warn">Missing permissions</b><br>${miss.join(', ')}<br>
       <button class="btn small" id="fixp">FIX IN SETTINGS</button></div>`;
   }
@@ -378,7 +422,7 @@ async function renderHome() {
     : `<b class="warn">Setup not finished</b><button class="btn primary" id="rs">FINISH SETUP</button>`;
   if ($('rs')) $('rs').onclick = wizStart;
   if (VALS.setupDone === 'true') {
-    $('panicbox').innerHTML = panicButtonHTML() + '<button class="btn small" id="testbtn">TEST MODE (sends a TEST text, records 5 seconds)</button>';
+    $('panicbox').innerHTML = panicButtonHTML() + '<button class="btn small" id="testbtn">TEST MODE (sends a TEST alert)</button>';
     bindPanicButton(); $('testbtn').onclick = startTestFlow;
   }
   else $('panicbox').innerHTML = '';
@@ -475,9 +519,9 @@ async function showTestResult() {
   let r = {};
   try { r = JSON.parse((await N('getTestResult')).json || '{}'); } catch (e) {}
   const L = $('choose'); L.classList.remove('hidden');
-  const smsLines = (r.msgs || []).map(m => `<div class="msgline"><b>${esc(m.name)}</b>: <span class="${m.status === 'sent' ? 'ok' : 'bad'}">${m.status === 'sent' ? 'TEST SMS SENT ✓' : 'SMS ' + esc(m.status).toUpperCase() + ' ✗'}</span></div>`).join('') || '<div class="bad">No SMS was sent ✗</div>';
+  const smsLines = (r.msgs || []).map(m => `<div class="msgline"><b>${esc(m.name)}</b>: <span class="${m.status === 'sent' ? 'ok' : 'bad'}">${m.status === 'sent' ? (/^Data/.test(m.name) ? 'TEST ALERT SENT ✓' : 'TEST SMS SENT ✓') : (/^Data/.test(m.name) ? 'INTERNET ' : 'SMS ') + esc(m.status).toUpperCase() + ' ✗'}</span></div>`).join('') || '<div class="bad">No SMS was sent ✗</div>';
   L.innerHTML = `<h1>Test result</h1><div class="card">${smsLines}</div>
-    <div class="card">${r.clip ? '<b class="ok">5-second clip recorded ✓</b>' : '<b class="bad">No clip recorded ✗</b>'}${r.note ? '<br><span class="warn">' + esc(r.note) + '</span>' : ''}</div>
+    <div class="card">${VALS.recording === 'off' ? '<b class="ok">Recording is turned off</b>' : r.clip ? '<b class="ok">5-second clip recorded ✓</b>' : '<b class="bad">No clip recorded ✗</b>'}${r.note ? '<br><span class="warn">' + esc(r.note) + '</span>' : ''}</div>
     <div class="card">Location: <b>${r.loc === 'live' ? 'live GPS ✓' : r.loc === 'last known' ? 'last known only' : 'not available ✗'}</b></div>
     <button class="btn big primary" id="tok">OK</button>`;
   $('tok').onclick = () => { L.classList.add('hidden'); L.innerHTML = ''; };
@@ -624,7 +668,8 @@ async function renderSettingsInner() {
     <div class="card"><h2>Panic</h2>
       <button class="btn small" id="stt">WHO TO ALERT: ${TARGET_LABEL[VALS.defaultTarget || '']}</button>
       <button class="btn small" id="sint">LOCATION UPDATE EVERY ${VALS.intervalMin || 2} MIN</button>
-      <button class="btn small" id="scam">CAMERA: ${CAMLBL[camMode()]}</button>
+      <button class="btn small" id="srec">RECORDING: ${VALS.recording === 'off' ? 'OFF' : 'ON'}</button>
+      ${VALS.recording === 'off' ? '<div class="sub" style="margin:6px 0">Recording is off. Panic still sends your alerts and location. No camera or microphone is used.</div>' : `<button class="btn small" id="scam">CAMERA: ${CAMLBL[camMode()]}</button>`}
       <div class="sub" style="margin:6px 0">BOTH = the phone alternates: one clip from the front camera, the next from the back (Android cannot film with both at once). Test runs record one front clip.</div>
       <button class="btn small" id="sneu">SCREEN WHILE ACTIVE: ${({calc:'CALCULATOR',blank:'BLANK',status:'STATUS'})[VALS.neutral || 'calc']}</button>
       <div class="sub" style="margin:6px 0">Calculator or blank: hold the "=" key (or anywhere on blank) for 2 seconds to enter your PIN. On the calculator, hold the number display for 2 seconds to peek at message status.</div>
@@ -635,6 +680,8 @@ async function renderSettingsInner() {
       <div class="sub" style="font-size:15px">Clips are saved in 1-minute files inside the app. The Recordings screen (play, export, share, delete) comes in Stage 5.
       While recording, Android always shows a camera/mic dot and a notification; these cannot be hidden.</div>
       <button class="btn small" id="orecs">OPEN RECORDINGS</button></div>
+    <div class="card"><h2>Privacy and disclaimer</h2>
+      <button class="btn small" id="legalbtn">READ PRIVACY POLICY AND DISCLAIMER</button></div>
     <div class="card"><h2>Samsung battery guide</h2>
       <div class="sub" style="font-size:15px;line-height:1.5">Samsung phones stop background apps aggressively. Do these once:<br>
       1. Settings, Apps, Panic Guard, Battery: choose <b>Unrestricted</b>.<br>
@@ -690,7 +737,8 @@ async function renderSettingsInner() {
   $('orecs').onclick = () => { show('recs'); renderRecs(); };
   $('gbat').onclick = () => N('openBatterySettings').catch(() => {});
   $('gapp').onclick = () => N('openAppSettings').catch(() => {});
-  $('scam').onclick = async () => { await saveVals({ camMode: cyc(['front', 'back', 'both'], camMode()) }); renderSettings(); };
+  $('srec').onclick = async () => { const off = VALS.recording !== 'off'; $('srec').textContent = 'RECORDING: ' + (off ? 'OFF' : 'ON'); await saveVals({ recording: off ? 'off' : 'on' }); renderSettings(); };
+  if ($('scam')) $('scam').onclick = async () => { await saveVals({ camMode: cyc(['front', 'back', 'both'], camMode()) }); renderSettings(); };
   $('salm').onclick = async () => { await saveVals({ alertMode: cyc(['sms', 'auto', 'both', 'data'], VALS.alertMode || 'sms') }); if (VALS.alertMode !== 'sms' && !VALS.dataTopic) await saveVals({ dataTopic: newTopic() }); renderSettings(); };
   if ($('ntop')) $('ntop').onclick = async () => { if (confirm('Make a new code? Your contacts must subscribe to the new one.')) { await saveVals({ dataTopic: newTopic() }); renderSettings(); } };
   if ($('shtop')) $('shtop').onclick = async () => {
@@ -700,6 +748,7 @@ async function renderSettingsInner() {
     try { await navigator.clipboard.writeText(t); alert('Copied. Paste it into a message to your contact.'); } catch (e) { alert(t); }
   };
   $('sneu').onclick = async () => { await saveVals({ neutral: cyc(['calc', 'blank', 'status'], VALS.neutral || 'calc') }); renderSettings(); };
+  $('legalbtn').onclick = () => showLegal(false);
   $('ssafe').onclick = async () => { const on = VALS.sendSafe !== 'true'; $('ssafe').textContent = (on ? 'ON' : 'OFF') + ': SEND "I\'M SAFE" SMS WHEN I UNLOCK'; await saveVals({ sendSafe: on ? 'true' : 'false' }); renderSettings(); };
   $('svol').onclick = async () => { const on = VALS.volTriple !== 'true'; $('svol').textContent = (on ? 'ON' : 'OFF') + ': TRIPLE VOLUME PRESS (APP OPEN ONLY)'; await saveVals({ volTriple: on ? 'true' : 'false' }); renderSettings(); };
   $('clog').onclick = async () => { await N('clearLog'); renderSettings(); };
@@ -829,6 +878,7 @@ $('n-install').onclick = () => { show('update'); installLatest(); };
   if (!PG) { $('summary').innerHTML = '<b class="warn">This is the website preview.</b><br>Install the app from the GitHub Release to use Panic Guard.'; return; }
   await renderHome();
   try { const st = JSON.parse((await N('getPanicState')).json || '{}'); if (st.active) showPanic(); } catch (e) {}
+  if (VALS.legalOk !== 'true') await showLegal(true);
   if (VALS.setupDone !== 'true') wizStart();
 })();
 </script>

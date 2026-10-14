@@ -170,14 +170,14 @@ class PanicService : LifecycleService() {
         } catch (e: Exception) { return false }
 
         if (Build.VERSION.SDK_INT < 29) {
-            return try { startForeground(NID, n); recAllowed = fromApp && has(Manifest.permission.CAMERA); true }
+            return try { startForeground(NID, n); recAllowed = fromApp && !recOff() && has(Manifest.permission.CAMERA); true }
             catch (e: Exception) { false }
         }
         val loc = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         // Camera/microphone types may only be started while the app is on screen (Android 11+),
         // never from a boot or background restart.
         var av = 0
-        if (fromApp && Build.VERSION.SDK_INT >= 30) {
+        if (fromApp && !recOff() && Build.VERSION.SDK_INT >= 30) {
             if (has(Manifest.permission.CAMERA)) av = av or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             if (has(Manifest.permission.RECORD_AUDIO)) av = av or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         }
@@ -190,6 +190,8 @@ class PanicService : LifecycleService() {
         }
         return try { startForeground(NID, n, loc); recAllowed = false; true } catch (e: Exception) { false }
     }
+
+    private fun recOff() = Store.get(this, "recording") == "off"
 
     private fun targetsFrom(t: String) = when (t) { "1" -> listOf(1); "2" -> listOf(2); else -> listOf(1, 2) }
 
@@ -213,7 +215,8 @@ class PanicService : LifecycleService() {
         }
         startLocation()
         if (isNew) {
-            if (recAllowed) startRecording()
+            if (recOff()) { recNote = ""; log(this, "Recording is turned off in Settings"); recDone = true }
+            else if (recAllowed) startRecording()
             else { recNote = "Recording off: camera permission or Android refused"; log(this, recNote); recDone = true }
         }
 
