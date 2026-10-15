@@ -344,12 +344,17 @@ class PanicService : LifecycleService() {
     }
 
     private fun scheduleTick() {
-        val min = (Store.get(this, "intervalMin", "2").toIntOrNull() ?: 2).coerceIn(1, 30)
+        val min = (Store.get(this, "intervalMin", "2").toIntOrNull() ?: 2).coerceIn(1, 120)
         handler.postDelayed({
             if (running) {
+                try {
+                    if (wake?.isHeld == true) wake?.release()
+                    wake?.acquire(6 * 3600 * 1000L)
+                } catch (e: Exception) { }
                 val l = lastLoc
                 val s = sentLoc
-                if (l != null && fresh && (s == null || l.distanceTo(s) > 25f)) sendAlert("update")
+                val moveOnly = Store.get(this, "moveOnly") == "true"
+                if (l != null && (!moveOnly || (fresh && (s == null || l.distanceTo(s) > 25f)))) sendAlert("update")
                 scheduleTick()
             }
         }, min * 60_000L)

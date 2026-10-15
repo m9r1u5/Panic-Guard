@@ -650,6 +650,7 @@ async function renderSettingsInner() {
     camera:'Camera', microphone:'Microphone', notifications:'Notifications', battery:'Battery optimization' };
   const S = $('settings');
   S.innerHTML = `<h1>Settings</h1>
+    <button class="btn small" id="legalbtn">VIEW DISCLAIMER AND PRIVACY POLICY</button>
     ${contactRows()}
     <div class="card"><h2>Alert message</h2><textarea id="smsg">${esc(VALS.message || DEFAULT_MSG)}</textarea>
       <button class="btn small" id="savemsg">SAVE MESSAGE</button><div id="mok" class="sub ok"></div></div>
@@ -665,9 +666,15 @@ async function renderSettingsInner() {
       <button class="btn small" id="shtop">SEND SETUP STEPS TO A CONTACT</button>
       <button class="btn small" id="ntop">MAKE A NEW CODE</button>
       <div class="sub" style="margin-top:6px">Keep the code private: anyone who knows it can read your alerts. Use TEST on the home screen to check your contact receives it.</div>` : ''}</div>
+    <div class="card"><h2>Location tracking</h2>
+      <div class="sub">While a panic is active, the app keeps sending your current location until you stop it with your PIN. Choose how often, in minutes (1 to 120).</div>
+      <input id="intin" type="number" inputmode="numeric" min="1" max="120" value="${VALS.intervalMin || 2}" style="width:100%;font-size:24px;padding:12px;border-radius:12px;border:3px solid #fff;background:#000;color:#fff">
+      <button class="btn small" id="intsave">SAVE MINUTES</button>
+      <div id="intok" class="sub ok"></div>
+      <button class="btn small" id="smove">${VALS.moveOnly === 'true' ? 'ON' : 'OFF'}: ONLY SEND IF I HAVE MOVED</button>
+      <div class="sub" style="margin-top:8px">OFF (recommended for tracking): sends every time, even if you are standing still. Each update is a text message when SMS is used, so a short time means more SMS charges. Internet alerts cost no airtime.</div></div>
     <div class="card"><h2>Panic</h2>
       <button class="btn small" id="stt">WHO TO ALERT: ${TARGET_LABEL[VALS.defaultTarget || '']}</button>
-      <button class="btn small" id="sint">LOCATION UPDATE EVERY ${VALS.intervalMin || 2} MIN</button>
       <button class="btn small" id="srec">RECORDING: ${VALS.recording === 'off' ? 'OFF' : 'ON'}</button>
       ${VALS.recording === 'off' ? '<div class="sub" style="margin:6px 0">Recording is off. Panic still sends your alerts and location. No camera or microphone is used.</div>' : `<button class="btn small" id="scam">CAMERA: ${CAMLBL[camMode()]}</button>`}
       <div class="sub" style="margin:6px 0">BOTH = the phone alternates: one clip from the front camera, the next from the back (Android cannot film with both at once). Test runs record one front clip.</div>
@@ -675,13 +682,11 @@ async function renderSettingsInner() {
       <div class="sub" style="margin:6px 0">Calculator or blank: hold the "=" key (or anywhere on blank) for 2 seconds to enter your PIN. On the calculator, hold the number display for 2 seconds to peek at message status.</div>
       <button class="btn small" id="ssafe">${VALS.sendSafe === 'true' ? 'ON' : 'OFF'}: SEND "I'M SAFE" SMS WHEN I UNLOCK</button>
       <button class="btn small" id="svol">${VALS.volTriple === 'true' ? 'ON' : 'OFF'}: TRIPLE VOLUME PRESS (APP OPEN ONLY)</button>
-      <div class="sub" style="margin-top:8px">Updates are only sent if you have moved.</div></div>
+</div>
     <div class="card"><h2>Recordings</h2><div id="recinfo" class="sub">Checking…</div>
       <div class="sub" style="font-size:15px">Clips are saved in 1-minute files inside the app. The Recordings screen (play, export, share, delete) comes in Stage 5.
       While recording, Android always shows a camera/mic dot and a notification; these cannot be hidden.</div>
       <button class="btn small" id="orecs">OPEN RECORDINGS</button></div>
-    <div class="card"><h2>Privacy and disclaimer</h2>
-      <button class="btn small" id="legalbtn">READ PRIVACY POLICY AND DISCLAIMER</button></div>
     <div class="card"><h2>Samsung battery guide</h2>
       <div class="sub" style="font-size:15px;line-height:1.5">Samsung phones stop background apps aggressively. Do these once:<br>
       1. Settings, Apps, Panic Guard, Battery: choose <b>Unrestricted</b>.<br>
@@ -733,7 +738,13 @@ async function renderSettingsInner() {
   $('oas2').onclick = () => N('openAppSettings');
   const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
   $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', ...(haveC(1) ? ['1'] : []), ...(haveC(2) ? ['2'] : []), ...(haveC(1) && haveC(2) ? ['both'] : [])], VALS.defaultTarget || '') }); renderSettings(); };
-  $('sint').onclick = async () => { await saveVals({ intervalMin: String(cyc([1, 2, 5, 10], +(VALS.intervalMin || 2))) }); renderSettings(); };
+  $('intsave').onclick = async () => {
+    const n = Math.round(+$('intin').value);
+    if (!(n >= 1 && n <= 120)) { $('intok').className = 'sub bad'; $('intok').textContent = 'Enter a number from 1 to 120.'; return; }
+    await saveVals({ intervalMin: String(n) });
+    $('intok').className = 'sub ok'; $('intok').textContent = 'Saved: every ' + n + ' minute' + (n === 1 ? '' : 's');
+  };
+  $('smove').onclick = async () => { const on = VALS.moveOnly !== 'true'; $('smove').textContent = (on ? 'ON' : 'OFF') + ': ONLY SEND IF I HAVE MOVED'; await saveVals({ moveOnly: on ? 'true' : 'false' }); renderSettings(); };
   $('orecs').onclick = () => { show('recs'); renderRecs(); };
   $('gbat').onclick = () => N('openBatterySettings').catch(() => {});
   $('gapp').onclick = () => N('openAppSettings').catch(() => {});
