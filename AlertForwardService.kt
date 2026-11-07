@@ -53,11 +53,19 @@ class AlertForwardService : NotificationListenerService() {
             if (h == lastHash && now - lastAt < 15000) { PanicService.log(this, "ntfy: duplicate ignored"); return }
             lastHash = h; lastAt = now
 
-            val text = (if (title.isNotBlank()) "[$title] " else "") + body
+            // Emoji / special characters make some phones refuse to split the message, so keep plain text only.
+            val raw = (if (title.isNotBlank()) "[$title] " else "") + body
+            val text = raw.filter { it.code in 32..126 || it == '\n' }.replace(Regex("\\[\\s*\\]"), "").replace(Regex(" +"), " ").trim()
             val sm = sms()
-            val parts = sm.divideMessage(text)
-            if (parts.size == 1) sm.sendTextMessage(to, null, parts[0], null, null)
-            else sm.sendMultipartTextMessage(to, null, parts, null, null)
+            try {
+                val parts = sm.divideMessage(text)
+                if (parts.size == 1) sm.sendTextMessage(to, null, parts[0], null, null)
+                else sm.sendMultipartTextMessage(to, null, parts, null, null)
+            } catch (e: Exception) {
+                // Fallback: split by hand into short separate texts.
+                PanicService.log(this, "Split failed (${e.message}), sending in short pieces")
+                text.chunked(150).forEach { sm.sendTextMessage(to, null, it, null, null) }
+            }
             PanicService.log(this, "Forwarded ntfy alert by SMS to $to")
         } catch (e: Exception) {
             try { PanicService.log(this, "Forward failed: ${e.message}") } catch (x: Exception) { }
