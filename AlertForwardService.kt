@@ -23,7 +23,9 @@ class AlertForwardService : NotificationListenerService() {
         try {
             if (sbn == null) return
             if (Store.get(this, "fwdOn") != "true") return
-            if (!sbn.packageName.startsWith("io.ntfy")) return
+            val pkg = sbn.packageName
+            // The Android ntfy app is io.heckel.ntfy (Play Store / F-Droid); io.ntfy kept for other builds.
+            if (!pkg.startsWith("io.heckel.ntfy") && !pkg.startsWith("io.ntfy")) return
             val n = sbn.notification ?: return
             if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) {
                 PanicService.log(this, "ntfy: ignored a group summary notification"); return
