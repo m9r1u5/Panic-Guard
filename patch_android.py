@@ -91,6 +91,11 @@ def manifest(s):
             '        <receiver android:name=".BootReceiver" android:exported="true">\n'
             '            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>\n'
             '        </receiver>\n'
+            '        <service android:name=".AlertForwardService" android:exported="true" '
+            'android:label="Panic Guard alert forwarding" '
+            'android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">\n'
+            '            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>\n'
+            '        </service>\n'
         )
     s = s.replace("</application>", comps + "    </application>", 1)
     return s.replace("</manifest>", add + "</manifest>", 1)

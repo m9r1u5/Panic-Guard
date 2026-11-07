@@ -207,6 +207,22 @@ class PanicGuardPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun listenerEnabled(call: PluginCall) {
+        val on = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+        call.resolve(JSObject().put("enabled", on))
+    }
+
+    @PluginMethod
+    fun openListenerSettings(call: PluginCall) {
+        val i = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try { context.startActivity(i) } catch (e: Exception) {
+            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + context.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
     fun openAppSettings(call: PluginCall) {
         val i = Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

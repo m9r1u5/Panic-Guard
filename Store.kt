@@ -15,7 +15,7 @@ object Store {
     val KEYS = listOf(
         "setupDone", "c1Name", "c1Num", "c2Name", "c2Num",
         "message", "bioEnabled", "requireBoth",
-        "defaultTarget", "intervalMin", "sendSafe", "volTriple", "camFront", "camMode", "alertMode", "dataTopic", "recording", "legalOk", "moveOnly", "neutral"
+        "defaultTarget", "intervalMin", "sendSafe", "volTriple", "camFront", "camMode", "alertMode", "dataTopic", "recording", "legalOk", "moveOnly", "fwdOn", "fwdNum", "fwdUpd", "neutral"
     )
 
     @Volatile private var cached: SharedPreferences? = null
