@@ -673,6 +673,9 @@ async function renderSettingsInner() {
       <button class="btn small" id="fwdsave">SAVE NUMBER</button>
       <div id="fwdok" class="sub ok"></div>
       <button class="btn small" id="sfwdu">${VALS.fwdUpd === 'true' ? 'ON' : 'OFF'}: ALSO FORWARD LOCATION UPDATES</button>
+      <div id="fwdstat" class="sub" style="margin-top:8px">Checking…</div>
+      <button class="btn small" id="fwdtest">SEND A TEST SMS TO THIS NUMBER NOW</button>
+      <div id="fwdlog" class="sub" style="margin-top:8px"></div>
       <div class="sub" style="margin-top:8px">Needs the ntfy app installed and subscribed on this phone, and "Notification access" allowed for Panic Guard. Some networks do not deliver a text to your own number; if so, use another number. Location updates can mean many texts.</div></div>
     <div class="card"><h2>Location tracking</h2>
       <div class="sub">While a panic is active, the app keeps sending your current location until you stop it with your PIN. Choose how often, in minutes (1 to 120).</div>
@@ -746,6 +749,21 @@ async function renderSettingsInner() {
   $('oas2').onclick = () => N('openAppSettings');
   const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
   $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', ...(haveC(1) ? ['1'] : []), ...(haveC(2) ? ['2'] : []), ...(haveC(1) && haveC(2) ? ['both'] : [])], VALS.defaultTarget || '') }); renderSettings(); };
+  $('fwdtest').onclick = async () => {
+    try { await N('sendForwardTest'); $('fwdok').className = 'sub ok'; $('fwdok').textContent = 'Test SMS handed to the phone. Check for it on that number.'; }
+    catch (e) { $('fwdok').className = 'sub bad'; $('fwdok').textContent = 'Could not send: ' + (e.message || e) + ' (allow SMS, save a number)'; }
+    setTimeout(renderSettings, 1500);
+  };
+  (async () => {
+    try {
+      const en = (await N('listenerEnabled')).enabled;
+      $('fwdstat').innerHTML = 'Notification access for Panic Guard: <b class="' + (en ? 'ok' : 'bad') + '">' + (en ? 'ON' : 'OFF - turn it on, or forwarding cannot work') + '</b>';
+    } catch (e) { $('fwdstat').textContent = ''; }
+    try {
+      const lg = JSON.parse((await N('getLog')).json || '[]').filter(e => /ntfy|Forward/i.test(e.m)).slice(-4).reverse();
+      $('fwdlog').innerHTML = lg.length ? lg.map(e => new Date(e.t).toLocaleTimeString() + ' ' + esc(e.m)).join('<br>') : 'No forwarding activity yet.';
+    } catch (e) {}
+  })();
   $('fwdsave').onclick = async () => {
     const v = $('fwdnum').value.replace(/[^0-9+]/g, '');
     if (v.replace(/\D/g, '').length < 7) { $('fwdok').className = 'sub bad'; $('fwdok').textContent = 'Enter a full phone number.'; return; }

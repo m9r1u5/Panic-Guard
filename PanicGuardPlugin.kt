@@ -207,6 +207,22 @@ class PanicGuardPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun sendForwardTest(call: PluginCall) {
+        val to = Store.get(context, "fwdNum").trim()
+        if (to.isBlank()) return call.reject("No number saved")
+        try {
+            val sm = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(android.telephony.SmsManager::class.java)
+                     else @Suppress("DEPRECATION") android.telephony.SmsManager.getDefault()
+            sm.sendTextMessage(to, null, "Panic Guard: test SMS from the forwarding setting.", null, null)
+            PanicService.log(context, "Forward test SMS handed to the phone for $to")
+            call.resolve()
+        } catch (e: Exception) {
+            PanicService.log(context, "Forward test SMS failed: ${e.message}")
+            call.reject(e.message ?: "SMS failed")
+        }
+    }
+
+    @PluginMethod
     fun listenerEnabled(call: PluginCall) {
         val on = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
         call.resolve(JSObject().put("enabled", on))

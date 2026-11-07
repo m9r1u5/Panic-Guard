@@ -25,23 +25,30 @@ class AlertForwardService : NotificationListenerService() {
             if (Store.get(this, "fwdOn") != "true") return
             if (!sbn.packageName.startsWith("io.ntfy")) return
             val n = sbn.notification ?: return
-            if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
+            if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) {
+                PanicService.log(this, "ntfy: ignored a group summary notification"); return
+            }
             val ex = n.extras
             val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
             val body = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT)
                 ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString() ?: ""
             val all = "$title $body"
             // Only Panic Guard alerts, never other ntfy topics.
-            if (!all.contains("PANIC ALERT") && !all.contains("Panic Guard")) return
+            PanicService.log(this, "ntfy notification seen: " + all.take(40))
+            if (!all.contains("PANIC ALERT") && !all.contains("Panic Guard")) {
+                PanicService.log(this, "ntfy: not a Panic Guard alert, ignored"); return
+            }
             val isUpdate = body.contains("[Panic Guard update]")
-            if (isUpdate && Store.get(this, "fwdUpd") != "true") return
+            if (isUpdate && Store.get(this, "fwdUpd") != "true") {
+                PanicService.log(this, "ntfy: location update not forwarded (option is off)"); return
+            }
             val to = Store.get(this, "fwdNum").trim()
             if (to.isBlank()) { PanicService.log(this, "Forward skipped: no number set"); return }
 
             // Ignore duplicate posts of the same notification.
             val h = all.hashCode()
             val now = System.currentTimeMillis()
-            if (h == lastHash && now - lastAt < 15000) return
+            if (h == lastHash && now - lastAt < 15000) { PanicService.log(this, "ntfy: duplicate ignored"); return }
             lastHash = h; lastAt = now
 
             val text = (if (title.isNotBlank()) "[$title] " else "") + body
