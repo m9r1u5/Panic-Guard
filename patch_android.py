@@ -71,7 +71,7 @@ PERMS = [
     "READ_CONTACTS", "SEND_SMS", "ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION",
     "ACCESS_BACKGROUND_LOCATION", "CAMERA", "RECORD_AUDIO", "POST_NOTIFICATIONS",
     "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "USE_BIOMETRIC", "VIBRATE",
-    "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "FOREGROUND_SERVICE_CAMERA", "FOREGROUND_SERVICE_MICROPHONE", "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK",
+    "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_LOCATION", "FOREGROUND_SERVICE_CAMERA", "FOREGROUND_SERVICE_MICROPHONE", "FOREGROUND_SERVICE_SPECIAL_USE", "USE_FULL_SCREEN_INTENT", "RECEIVE_BOOT_COMPLETED", "WAKE_LOCK",
 ]
 FEATURES = ["android.hardware.telephony", "android.hardware.camera", "android.hardware.location.gps"]
 
@@ -91,6 +91,11 @@ def manifest(s):
             '        <receiver android:name=".BootReceiver" android:exported="true">\n'
             '            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /></intent-filter>\n'
             '        </receiver>\n'
+            '        <service android:name=".AlertListenService" android:exported="false" '
+            'android:foregroundServiceType="specialUse">\n'
+            '            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" '
+            'android:value="Receives emergency alerts from the user\'s chosen alert codes over the internet" />\n'
+            '        </service>\n'
             '        <service android:name=".AlertForwardService" android:exported="true" '
             'android:label="Panic Guard alert forwarding" '
             'android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">\n'

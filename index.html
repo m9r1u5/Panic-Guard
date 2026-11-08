@@ -286,7 +286,7 @@ const CAMLBL = { front:'FRONT', back:'BACK', both:'BOTH (ALTERNATE)' };
 const ALMLBL = { sms:'TEXT (SMS)', auto:'INTERNET FIRST, SMS BACKUP', data:'INTERNET (DATA / WIFI)', both:'TEXT + INTERNET' };
 const camMode = () => VALS.camMode || (VALS.camFront === 'false' ? 'back' : 'front');
 function newTopic() { const a = new Uint8Array(12); crypto.getRandomValues(a); return 'pg-' + Array.from(a, b => 'abcdefghjkmnpqrstuvwxyz23456789'[b % 31]).join(''); }
-function topicText() { const t = VALS.dataTopic; return 'Panic Guard emergency alerts: 1) Install the free ntfy app (Play Store). 2) Open it, tap +, and subscribe to the topic: ' + t + ' (leave the server as ntfy.sh). Or open https://ntfy.sh/' + t + ' in a browser and tap Subscribe. Turn notifications on and set them to high priority. When I press panic you will get my location here.'; }
+function topicText() { const t = VALS.dataTopic; return 'Panic Guard emergency alerts. ANDROID: install the Panic Guard app, open Settings, turn ON RECEIVE ALERTS IN THIS APP and type this alert code: ' + t + ' . IPHONE: install the free ntfy app from the App Store, tap +, and subscribe to the topic ' + t + ' (leave the server as ntfy.sh), then turn notifications on and set them to high priority. When I press panic you will get my location in the alert.'; }
 const haveC = n => !!VALS['c' + n + 'Num'];
 let contactRedraw = null;
 document.addEventListener('click', async e => {
@@ -368,7 +368,7 @@ const LEGAL_HTML = `
 <div class="card"><h2>Important: please read</h2>
 <p>Panic Guard is a <b>personal safety aid. It is not an emergency service</b>, and it does not contact the police, an ambulance or any security company. In an emergency, call your local emergency number as well.</p>
 <p>The app depends on your phone, battery, mobile signal or internet, location accuracy and Android settings. <b>Alerts can be delayed or fail to arrive</b>, and your location may be missing or inaccurate. Recording may fail or be stopped by the phone. Nobody can guarantee that any message, location or recording will be sent, received or saved.</p>
-<p>Your contacts only see an alert if they have a working phone and signal and, for internet alerts, have set up the ntfy app. Please test the app with your contacts regularly using Test Mode.</p>
+<p>Your contacts only see an alert if they have a working phone and signal and, for internet alerts, have set up their receiving (Panic Guard's Receive alerts on Android, or the ntfy app). Please test the app with your contacts regularly using Test Mode.</p>
 <p>Camera and microphone use, and sharing recordings, may be restricted by law where you are. You are responsible for using these features lawfully.</p>
 <p>To the extent the law allows, the developer is not liable for any loss, injury or damage arising from use of, or inability to use, this app. Nothing here limits any rights you have that cannot be limited by law.</p></div>
 <div class="card"><h2>Privacy policy</h2>
@@ -381,7 +381,7 @@ Camera and microphone: used only during a panic or a test, and only if recording
 PIN and fingerprint or face: your PIN is stored on your phone. Fingerprint and face checks are done by Android; the app never receives your biometric data.</p>
 <p><b>4. Where information is sent.</b> Information leaves your phone only when you start a panic alert, run a test, or stop an alert and have chosen to send an "I'm safe" message:<br>
 By text message (SMS): the message, with a map link, is sent through your phone's SMS service to your contacts. Your mobile network carries it and your network charges apply.<br>
-Over the internet (if you turn this on): the message is sent over mobile data or wifi to ntfy.sh, a third-party notification service, under your private alert code. Your contacts receive it by subscribing to that code in the ntfy app. ntfy handles it under its own privacy policy. Anyone who knows your alert code could read your alerts, so keep it private and use "Make a new code" if it is shared by mistake.<br>
+Over the internet (if you turn this on): the message is sent over mobile data or wifi to ntfy.sh, a third-party notification service, under your private alert code. Your contacts receive it by entering that code in Panic Guard (Android) or subscribing to it in the ntfy app (iPhone). ntfy handles it under its own privacy policy. Anyone who knows your alert code could read your alerts, so keep it private and use "Make a new code" if it is shared by mistake.<br>
 Update check: if you use the Update button, the app contacts GitHub to see whether a newer version exists. Nothing is sent to the developer.</p>
 <p><b>5. Your control.</b> You choose your contacts, alert method and message and can change them in Settings. You can turn recording off in Settings, and delete recordings inside the app. Uninstalling the app removes all data it stored on your phone. You can turn off any permission in Android settings, but the matching feature will then not work.</p>
 <p><b>6. Other people.</b> Please make sure your emergency contacts agree to be listed. Recordings may capture other people. You are responsible for using recording lawfully where you are.</p>
@@ -661,13 +661,22 @@ async function renderSettingsInner() {
       <div class="sub" style="margin-top:8px">When "require both" is on, stopping a panic needs both.</div></div>
     <div class="card"><h2>How to alert</h2>
       <button class="btn small" id="salm">ALERT BY: ${ALMLBL[VALS.alertMode || 'sms']}</button>
-      <div class="sub" style="margin:6px 0">TEXT uses SMS (needs airtime or an SMS bundle). INTERNET FIRST tries data/wifi, and if that fails the app texts instead (best for saving airtime). INTERNET works on mobile data or wifi with no airtime, but each contact must first install the free <b>ntfy</b> app and subscribe to your code below. BOTH sends both ways.</div>
+      <div class="sub" style="margin:6px 0">TEXT uses SMS (needs airtime or an SMS bundle). INTERNET FIRST tries data/wifi, and if that fails the app texts instead (best for saving airtime). INTERNET works on mobile data or wifi with no airtime, but each contact must first set up to receive it: on Android they turn on <b>Receive alerts in this app</b> in Panic Guard and type your code; on iPhone they install the free <b>ntfy</b> app and subscribe to your code. Your code is shown below. BOTH sends both ways.</div>
       ${(VALS.alertMode || 'sms') !== 'sms' ? `<div class="sub" style="margin:6px 0">Your alert code:<br><b style="font-size:18px;word-break:break-all">${esc(VALS.dataTopic || 'not made yet')}</b></div>
       <button class="btn small" id="shtop">SEND SETUP STEPS TO A CONTACT</button>
       <button class="btn small" id="ntop">MAKE A NEW CODE</button>
       <div class="sub" style="margin-top:6px">Keep the code private: anyone who knows it can read your alerts. Use TEST on the home screen to check your contact receives it.</div>` : ''}</div>
+    <div class="card"><h2>Receive alerts in this app</h2>
+      <div class="sub">Android: no ntfy app needed. This phone listens for Panic Guard alerts sent to the alert code(s) below and rings a loud alarm with the location link. Needs mobile data or wifi.</div>
+      <button class="btn small" id="srx">${VALS.rxOn === 'true' ? 'ON' : 'OFF'}: RECEIVE ALERTS IN THIS APP</button>
+      <input id="rxcodes" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Alert code(s), e.g. pg-abcd1234efgh" value="${esc(VALS.rxCodes || '')}" style="width:100%;font-size:20px;padding:12px;margin-top:10px;border-radius:12px;border:3px solid #fff;background:#000;color:#fff">
+      <div class="sub" style="margin-top:6px">Type the alert code of the person whose alerts you want. For more than one person, separate the codes with a comma.</div>
+      <button class="btn small" id="rxsave">SAVE CODE(S)</button>
+      <div id="rxok" class="sub ok"></div>
+      <div id="rxstat" class="sub" style="margin-top:8px"></div>
+      <div class="sub" style="margin-top:8px">A small "listening" notification stays on while this is ON. Keep Panic Guard battery on <b>Unrestricted</b> and do not swipe the app away from a "force stop". If the phone is off or offline, the alert arrives when it reconnects. iPhone cannot do this: use the ntfy app there. Want an SMS too? Use the next card.</div></div>
     <div class="card"><h2>Forward alerts I receive as SMS</h2>
-      <div class="sub">For a phone that RECEIVES alerts through the ntfy app. When a Panic Guard alert shows in ntfy, this phone also sends it as a text message (uses this phone's airtime).</div>
+      <div class="sub">For a phone that RECEIVES alerts (in this app or in the ntfy app). When a Panic Guard alert arrives, this phone also sends it as a text message to the number below (uses this phone's airtime).</div>
       <button class="btn small" id="sfwd">${VALS.fwdOn === 'true' ? 'ON' : 'OFF'}: FORWARD NTFY ALERTS AS SMS</button>
       <input id="fwdnum" type="tel" inputmode="tel" placeholder="Number to text, e.g. +27821234567" value="${esc(VALS.fwdNum || '')}" style="width:100%;font-size:22px;padding:12px;margin-top:10px;border-radius:12px;border:3px solid #fff;background:#000;color:#fff">
       <button class="btn small" id="fwdsave">SAVE NUMBER</button>
@@ -676,7 +685,7 @@ async function renderSettingsInner() {
       <div id="fwdstat" class="sub" style="margin-top:8px">Checking…</div>
       <button class="btn small" id="fwdtest">SEND A TEST SMS TO THIS NUMBER NOW</button>
       <div id="fwdlog" class="sub" style="margin-top:8px"></div>
-      <div class="sub" style="margin-top:8px">Needs the ntfy app installed and subscribed on this phone, and "Notification access" allowed for Panic Guard. Some networks do not deliver a text to your own number; if so, use another number. Location updates can mean many texts.</div></div>
+      <div class="sub" style="margin-top:8px">Works with the receiver above (nothing else needed). If you use the ntfy app instead, it needs the ntfy app subscribed on this phone and "Notification access" allowed for Panic Guard. Some networks do not deliver a text to your own number; if so, use another number. Location updates can mean many texts.</div></div>
     <div class="card"><h2>Location tracking</h2>
       <div class="sub">While a panic is active, the app keeps sending your current location until you stop it with your PIN. Choose how often, in minutes (1 to 120).</div>
       <input id="intin" type="number" inputmode="numeric" min="1" max="120" value="${VALS.intervalMin || 2}" style="width:100%;font-size:24px;padding:12px;border-radius:12px;border:3px solid #fff;background:#000;color:#fff">
@@ -747,8 +756,34 @@ async function renderSettingsInner() {
     setTimeout(renderSettings, 800);
   });
   $('oas2').onclick = () => N('openAppSettings');
+  const rxClean = (v) => String(v || '').split(/[,\s]+/).map(x => x.trim()).filter(x => /^[A-Za-z0-9_-]{6,64}$/.test(x)).filter((x, i, a) => a.indexOf(x) === i).join(',');
   const cyc = (arr, cur) => arr[(arr.indexOf(cur) + 1) % arr.length];
   $('stt').onclick = async () => { await saveVals({ defaultTarget: cyc(['', ...(haveC(1) ? ['1'] : []), ...(haveC(2) ? ['2'] : []), ...(haveC(1) && haveC(2) ? ['both'] : [])], VALS.defaultTarget || '') }); renderSettings(); };
+  $('srx').onclick = async () => {
+    const on = VALS.rxOn !== 'true';
+    if (!on) { await saveVals({ rxOn: 'false' }); await N('rxEnsure').catch(() => {}); renderSettings(); return; }
+    const v = $('rxcodes').value;
+    if (!rxClean(v)) { $('rxok').className = 'sub bad'; $('rxok').textContent = 'Type and save at least one alert code first.'; return; }
+    try { await N('requestPerm', { alias: 'notifications' }); } catch (e) {}
+    await saveVals({ rxCodes: rxClean(v), rxOn: 'true' }); await N('rxEnsure', { reset: true }).catch(() => {});
+    try { await N('openBatterySettings'); } catch (e) {}
+    renderSettings();
+  };
+  $('rxsave').onclick = async () => {
+    const c = rxClean($('rxcodes').value);
+    if (!c) { $('rxok').className = 'sub bad'; $('rxok').textContent = 'Enter a valid code (letters, numbers, dashes, at least 6 characters).'; return; }
+    await saveVals({ rxCodes: c });
+    await N('rxEnsure', { reset: true }).catch(() => {});
+    $('rxok').className = 'sub ok'; $('rxok').textContent = 'Saved: ' + c;
+  };
+  (async () => {
+    try {
+      const st = await N('rxStatus');
+      $('rxstat').innerHTML = VALS.rxOn === 'true'
+        ? 'Receiver: <b class="' + (st.connected ? 'ok' : 'warn') + '">' + (st.connected ? 'CONNECTED - listening' : 'starting / waiting for internet') + '</b>'
+        : 'Receiver: OFF';
+    } catch (e) { $('rxstat').textContent = ''; }
+  })();
   $('fwdtest').onclick = async () => {
     try { await N('sendForwardTest'); $('fwdok').className = 'sub ok'; $('fwdok').textContent = 'Test SMS handed to the phone. Check for it on that number.'; }
     catch (e) { $('fwdok').className = 'sub bad'; $('fwdok').textContent = 'Could not send: ' + (e.message || e) + ' (allow SMS, save a number)'; }
@@ -776,8 +811,8 @@ async function renderSettingsInner() {
     if (!on) { await saveVals({ fwdOn: 'false' }); renderSettings(); return; }
     if (!VALS.fwdNum) { $('fwdok').className = 'sub bad'; $('fwdok').textContent = 'Type and save a number first.'; return; }
     try { const r = await N('requestPerm', { alias: 'sms' }); if (r.state !== 'granted') { alert('Allow SMS for Panic Guard first.'); await N('openAppSettings'); return; } } catch (e) {}
-    let enabled = false;
-    try { enabled = (await N('listenerEnabled')).enabled; } catch (e) {}
+    let enabled = VALS.rxOn === 'true';
+    try { if (!enabled) enabled = (await N('listenerEnabled')).enabled; } catch (e) {}
     if (!enabled) {
       alert('Next screen: turn ON "Panic Guard alert forwarding" (Notification access). If it is greyed out, open App info for Panic Guard, tap the three dots at the top right, choose "Allow restricted settings", then try again.');
       await N('openListenerSettings').catch(() => {});
@@ -935,6 +970,7 @@ $('n-install').onclick = () => { show('update'); installLatest(); };
   if (!PG) { $('summary').innerHTML = '<b class="warn">This is the website preview.</b><br>Install the app from the GitHub Release to use Panic Guard.'; return; }
   await renderHome();
   try { const st = JSON.parse((await N('getPanicState')).json || '{}'); if (st.active) showPanic(); } catch (e) {}
+  try { if (VALS.rxOn === 'true') await N('rxEnsure'); } catch (e) {}
   if (VALS.legalOk !== 'true') await showLegal(true);
   if (VALS.setupDone !== 'true') wizStart();
 })();

@@ -222,6 +222,20 @@ class PanicGuardPlugin : Plugin() {
         }
     }
 
+    /** Start or stop the built-in alert receiver to match the saved setting. */
+    @PluginMethod
+    fun rxEnsure(call: PluginCall) {
+        if (call.getBoolean("reset", false) == true) Store.set(context, "rxSince", "")
+        if (Store.get(context, "rxOn") == "true" && AlertListenService.codes(context).isNotEmpty()) AlertListenService.start(context)
+        else AlertListenService.stop(context)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun rxStatus(call: PluginCall) {
+        call.resolve(JSObject().put("connected", AlertListenService.connected))
+    }
+
     @PluginMethod
     fun listenerEnabled(call: PluginCall) {
         val on = androidx.core.app.NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
